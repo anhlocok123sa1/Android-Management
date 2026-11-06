@@ -894,9 +894,15 @@ class LanMassInstallerApp:
         2. Push vào /data/local/tmp/ + pm install qua Shell thường
         3. adb install --no-streaming -r -g trực tiếp từ PC
         """
+        # Đảm bảo luôn dùng đường dẫn tuyệt đối đầy đủ của APK trên máy tính
+        full_apk_path = os.path.join(BASE_DIR, apk_filename) if not os.path.isabs(apk_filename) else apk_filename
+        if not os.path.isfile(full_apk_path):
+            full_apk_path = os.path.abspath(apk_filename)
+
         remote_tmp = f"/data/local/tmp/sgl_tmp_{ip.split('.')[-1]}.apk"
+        file_size = os.path.getsize(full_apk_path) if os.path.isfile(full_apk_path) else 0
         self.write_debug_file(
-            f"[{ip}] === BAT DAU CAI APK: {apk_filename} (Size: {os.path.getsize(apk_filename)} bytes) ==="
+            f"[{ip}] === BAT DAU CAI APK: {full_apk_path} (Size: {file_size} bytes) ==="
         )
 
         self.run_adb(
@@ -909,9 +915,9 @@ class LanMassInstallerApp:
         # Phương pháp 1: Push + pm install (Root)
         push_res = self.run_adb(
             ip,
-            ["push", apk_filename, remote_tmp],
+            ["push", full_apk_path, remote_tmp],
             timeout=timeout,
-            step_name=f"PUSH_{apk_filename}",
+            step_name=f"PUSH_{os.path.basename(apk_filename)}",
         )
         if (
             "error:" not in push_res.lower()
@@ -927,7 +933,7 @@ class LanMassInstallerApp:
                 ip,
                 install_cmd,
                 timeout=timeout,
-                step_name=f"PM_INSTALL_ROOT_{apk_filename}",
+                step_name=f"PM_INSTALL_ROOT_{os.path.basename(apk_filename)}",
             )
             if "Success" in res_root:
                 return res_root
@@ -935,9 +941,9 @@ class LanMassInstallerApp:
             # Phương pháp 2: Nếu Root pm install lỗi, thử qua shell thường
             self.run_adb(
                 ip,
-                ["push", apk_filename, remote_tmp],
+                ["push", full_apk_path, remote_tmp],
                 timeout=timeout,
-                step_name=f"RE_PUSH_{apk_filename}",
+                step_name=f"RE_PUSH_{os.path.basename(apk_filename)}",
             )
             res_shell = self.run_adb(
                 ip,
@@ -946,7 +952,7 @@ class LanMassInstallerApp:
                     f"chmod 644 {remote_tmp} ; pm install -r -g {remote_tmp} 2>&1 ; rm -f {remote_tmp}",
                 ],
                 timeout=timeout,
-                step_name=f"PM_INSTALL_SHELL_{apk_filename}",
+                step_name=f"PM_INSTALL_SHELL_{os.path.basename(apk_filename)}",
             )
             if "Success" in res_shell:
                 return res_shell
@@ -957,9 +963,9 @@ class LanMassInstallerApp:
         # Phương pháp 3: Dự phòng gọi adb install --no-streaming
         res_no_stream = self.run_adb(
             ip,
-            ["install", "--no-streaming", "-r", "-g", apk_filename],
+            ["install", "--no-streaming", "-r", "-g", full_apk_path],
             timeout=timeout,
-            step_name=f"ADB_INSTALL_NO_STREAM_{apk_filename}",
+            step_name=f"ADB_INSTALL_NO_STREAM_{os.path.basename(apk_filename)}",
         )
         if "Success" in res_no_stream:
             return res_no_stream

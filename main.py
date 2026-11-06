@@ -1,12 +1,14 @@
 import os
 import sys
-import tkinter as tk
-from tkinter import ttk
 
-# Đảm bảo đường dẫn import hoạt động chuẩn
+# Cố định thư mục làm việc tuyệt đối tại nơi chứa file script
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(BASE_DIR)
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+
+import tkinter as tk
+from tkinter import ttk
 
 from sgl_manager.config import (
     BG_MAIN, BG_PANEL, BG_TABLE, FG_MATRIX, FG_CYAN, FG_TEXT, BORDER_NEON

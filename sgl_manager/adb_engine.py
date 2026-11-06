@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 import json
+import shutil
 import traceback
 import urllib.request
 from .config import (
@@ -12,6 +13,9 @@ from .config import (
     APK_AUTOSETUP, APK_ANYDESK, APK_ADCONTROL, APK_RADIO_36,
     APK_RADIO_166, APK_ICS, LOCAL_BACKUP_DIR
 )
+
+# Cố định thư mục làm việc tại BASE_DIR
+os.chdir(BASE_DIR)
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 log_lock = threading.Lock()
@@ -31,6 +35,7 @@ class AdbEngine:
             target=lambda: subprocess.run(
                 [self.adb_bin, "start-server"],
                 capture_output=True,
+                cwd=BASE_DIR,
                 creationflags=CREATE_NO_WINDOW,
             ),
             daemon=True,
@@ -49,6 +54,39 @@ class AdbEngine:
         self.write_debug(f"[ENGINE_LOG] {msg}")
         self.log_cb(msg)
 
+    def get_apk_full_path(self, apk_filename):
+        """
+        Tìm và trả về đường dẫn tuyệt đối chuẩn xác của file APK.
+        Nếu thiếu 00_AutoSetup.apk, tự động đồng bộ từ bản build của AutoSetup sang.
+        """
+        # 1. Thử trực tiếp tại BASE_DIR
+        candidate = os.path.join(BASE_DIR, os.path.basename(apk_filename))
+        if os.path.isfile(candidate):
+            return candidate
+
+        # 2. Thử đường dẫn truyền vào nếu là tuyệt đối
+        if os.path.isabs(apk_filename) and os.path.isfile(apk_filename):
+            return apk_filename
+
+        # 3. Fallback đặc biệt cho 00_AutoSetup.apk nếu vừa build xong
+        if "autosetup" in apk_filename.lower():
+            build_apk = r"D:\Code\AutoSetup\app\build\outputs\apk\debug\app-debug.apk"
+            if os.path.isfile(build_apk):
+                try:
+                    shutil.copyfile(build_apk, candidate)
+                    self.log(f"✔ Đã tự động sao chép APK mới build sang: {candidate}")
+                    return candidate
+                except Exception as e:
+                    self.write_debug(f"Loi copy build_apk: {e}")
+                    return build_apk
+
+        # 4. Tìm kiếm đệm ở thư mục cha nếu có
+        parent_candidate = os.path.join(os.path.dirname(BASE_DIR), os.path.basename(apk_filename))
+        if os.path.isfile(parent_candidate):
+            return parent_candidate
+
+        return candidate
+
     def ensure_device_online(self, ip):
         target = f"{ip}:{ADB_PORT}"
         for attempt in range(1, 4):
@@ -58,6 +96,7 @@ class AdbEngine:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                cwd=BASE_DIR,
                 creationflags=CREATE_NO_WINDOW,
             )
             out = res.stdout or ""
@@ -72,6 +111,7 @@ class AdbEngine:
                     capture_output=True,
                     text=True,
                     timeout=6,
+                    cwd=BASE_DIR,
                     creationflags=CREATE_NO_WINDOW,
                 )
                 self.write_debug(f"[{ip}] adb reconnect: {r_rec.stdout} {r_rec.stderr}")
@@ -80,6 +120,7 @@ class AdbEngine:
                     [self.adb_bin, "devices"],
                     capture_output=True,
                     text=True,
+                    cwd=BASE_DIR,
                     creationflags=CREATE_NO_WINDOW,
                 )
                 if re.search(rf"{re.escape(target)}\s+device\b", res2.stdout or ""):
@@ -90,6 +131,7 @@ class AdbEngine:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=BASE_DIR,
                 creationflags=CREATE_NO_WINDOW,
             )
             time.sleep(0.5)
@@ -98,6 +140,7 @@ class AdbEngine:
                 capture_output=True,
                 text=True,
                 timeout=6,
+                cwd=BASE_DIR,
                 creationflags=CREATE_NO_WINDOW,
             )
             time.sleep(1.2)
@@ -117,6 +160,7 @@ class AdbEngine:
                     encoding="utf-8",
                     errors="replace",
                     timeout=timeout,
+                    cwd=BASE_DIR,
                     creationflags=CREATE_NO_WINDOW,
                 )
                 elapsed = time.time() - t0
@@ -135,12 +179,14 @@ class AdbEngine:
                     subprocess.run(
                         [self.adb_bin, "disconnect", target],
                         capture_output=True,
+                        cwd=BASE_DIR,
                         creationflags=CREATE_NO_WINDOW,
                     )
                     time.sleep(0.8)
                     subprocess.run(
                         [self.adb_bin, "connect", target],
                         capture_output=True,
+                        cwd=BASE_DIR,
                         creationflags=CREATE_NO_WINDOW,
                     )
                     time.sleep(1.2)
@@ -190,6 +236,7 @@ class AdbEngine:
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout,
+                cwd=BASE_DIR,
                 creationflags=CREATE_NO_WINDOW,
             )
             elapsed = time.time() - t0
@@ -215,30 +262,37 @@ class AdbEngine:
         self.write_debug(f"--- KET QUA CHAN DOAN [{ip}] ---\n{out}\n------------------------\n")
 
     def install_apk_safe(self, ip, apk_filename, timeout=180):
+        # Lấy đường dẫn tuyệt đối đầy đủ và đảm bảo file tồn tại
+        full_apk_path = self.get_apk_full_path(apk_filename)
+        if not os.path.isfile(full_apk_path):
+            err_msg = f"Không tìm thấy file APK trên PC: {full_apk_path}"
+            self.log(f"❌ [{ip}] {err_msg}")
+            return err_msg
+
         remote_tmp = f"/data/local/tmp/sgl_tmp_{ip.split('.')[-1]}.apk"
-        self.write_debug(f"[{ip}] === CAI APK: {apk_filename} ===")
+        self.write_debug(f"[{ip}] === CAI APK: {full_apk_path} ===")
 
         self.run_adb(ip, ["shell", f"rm -f {remote_tmp}"], timeout=10, step_name="CLEAN_TMP")
 
         # 1. Push + pm install Root
-        push_res = self.run_adb(ip, ["push", apk_filename, remote_tmp], timeout=timeout, step_name=f"PUSH_{apk_filename}")
+        push_res = self.run_adb(ip, ["push", full_apk_path, remote_tmp], timeout=timeout, step_name=f"PUSH_{os.path.basename(apk_filename)}")
         if "error:" not in push_res.lower() and "offline" not in push_res.lower():
             install_cmd = f"chmod 644 {remote_tmp} ; pm install -r -g {remote_tmp} 2>&1 ; rm -f {remote_tmp}"
-            res_root = self.run_adb_root(ip, install_cmd, timeout=timeout, step_name=f"PM_INSTALL_ROOT_{apk_filename}")
+            res_root = self.run_adb_root(ip, install_cmd, timeout=timeout, step_name=f"PM_INSTALL_ROOT_{os.path.basename(apk_filename)}")
             if "Success" in res_root:
                 return res_root
 
             # 2. pm install Shell thường
-            self.run_adb(ip, ["push", apk_filename, remote_tmp], timeout=timeout, step_name=f"RE_PUSH_{apk_filename}")
-            res_shell = self.run_adb(ip, ["shell", f"chmod 644 {remote_tmp} ; pm install -r -g {remote_tmp} 2>&1 ; rm -f {remote_tmp}"], timeout=timeout, step_name=f"PM_INSTALL_SHELL_{apk_filename}")
+            self.run_adb(ip, ["push", full_apk_path, remote_tmp], timeout=timeout, step_name=f"RE_PUSH_{os.path.basename(apk_filename)}")
+            res_shell = self.run_adb(ip, ["shell", f"chmod 644 {remote_tmp} ; pm install -r -g {remote_tmp} 2>&1 ; rm -f {remote_tmp}"], timeout=timeout, step_name=f"PM_INSTALL_SHELL_{os.path.basename(apk_filename)}")
             if "Success" in res_shell:
                 return res_shell
         else:
             res_root = f"Push that bai: {push_res}"
             res_shell = ""
 
-        # 3. adb install trực tiếp
-        res_no_stream = self.run_adb(ip, ["install", "--no-streaming", "-r", "-g", apk_filename], timeout=timeout, step_name=f"ADB_INSTALL_{apk_filename}")
+        # 3. adb install trực tiếp với đường dẫn tuyệt đối
+        res_no_stream = self.run_adb(ip, ["install", "--no-streaming", "-r", "-g", full_apk_path], timeout=timeout, step_name=f"ADB_INSTALL_{os.path.basename(apk_filename)}")
         if "Success" in res_no_stream:
             return res_no_stream
 
@@ -320,8 +374,9 @@ class AdbEngine:
             upd("⏳ [2/7] Đang chép bộ cài dự phòng vào mạch...")
             self.run_adb_root(ip, f"mkdir -p {LOCAL_BACKUP_DIR}", step_name="MKDIR_BACKUP")
             for b_apk in [APK_RADIO_36, APK_RADIO_166, APK_ICS]:
-                if os.path.isfile(b_apk):
-                    self.run_adb(ip, ["push", b_apk, f"{LOCAL_BACKUP_DIR}/{b_apk}"], timeout=180, step_name=f"PUSH_{b_apk}")
+                full_b_path = self.get_apk_full_path(b_apk)
+                if os.path.isfile(full_b_path):
+                    self.run_adb(ip, ["push", full_b_path, f"{LOCAL_BACKUP_DIR}/{b_apk}"], timeout=180, step_name=f"PUSH_{b_apk}")
 
         # 3. Cấp quyền AnyDesk
         upd("⏳ [3/7] Cấp quyền Root & hệ thống cho AnyDesk...")
