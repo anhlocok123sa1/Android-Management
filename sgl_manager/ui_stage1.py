@@ -123,6 +123,13 @@ class Stage1Frame(tk.Frame):
         self.ent_interval.insert(0, "4")
         self.ent_interval.pack(side=tk.LEFT, padx=(4, 12), ipady=2)
 
+        tk.Label(cfg_frame, text="DỰ ÁN GÁN BAN ĐẦU:", bg=BG_PANEL, fg=FG_AMBER, font=("Consolas", 9, "bold")).pack(side=tk.LEFT)
+        self.ent_project = tk.Entry(cfg_frame, width=14, font=("Consolas", 10, "bold"), justify="center",
+                                    fg=FG_AMBER, bg=BG_INPUT, insertbackground=FG_AMBER, relief="flat",
+                                    highlightthickness=1, highlightbackground="#B45309")
+        self.ent_project.insert(0, "Kho thiết bị")
+        self.ent_project.pack(side=tk.LEFT, padx=(4, 12), ipady=2)
+
         self.var_copy_backup = tk.BooleanVar(value=True)
         cb_backup = tk.Checkbutton(cfg_frame, text="Chép bộ cài dự phòng (1.66 / ICS)", variable=self.var_copy_backup,
                                    bg=BG_PANEL, fg=FG_TEXT, font=("Consolas", 9), selectcolor=BG_INPUT,
@@ -488,12 +495,15 @@ class Stage1Frame(tk.Frame):
         user = self.ent_user.get().strip()
         passwd = self.ent_pass.get().strip()
         backup = self.var_copy_backup.get()
+        project_name = self.ent_project.get().strip() or "Kho thiết bị"
 
         def _worker():
             try:
                 def _status_cb(msg, state="running"):
                     self.upsert_device_row(ip, status=msg, state=state)
-                ok, mac, ad_id = self.engine.install_stage1_flow(ip, user, passwd, backup, _status_cb)
+                ok, mac, ad_id = self.engine.install_stage1_flow(
+                    ip, user, passwd, backup, _status_cb, project_name=project_name
+                )
                 if ok:
                     with self.state_lock:
                         if mac and mac != "KHÔNG_RÕ_MAC": self.installed_macs.add(mac)

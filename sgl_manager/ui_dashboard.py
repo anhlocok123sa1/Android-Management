@@ -4,7 +4,7 @@ import threading
 import time
 from datetime import datetime, timezone
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from .config import (
     BG_MAIN, BG_PANEL, BG_INPUT, BG_TABLE,
@@ -55,10 +55,10 @@ class DashboardFrame(tk.Frame):
 
         tk.Label(filter_frame, text="DỰ ÁN:", bg=BG_PANEL, fg=FG_MATRIX, font=("Consolas", 9, "bold")).pack(side=tk.LEFT)
         self.var_filter_project = tk.StringVar(value="TẤT CẢ")
-        opt_project = ttk.Combobox(filter_frame, textvariable=self.var_filter_project,
-                                   values=["TẤT CẢ", "Android Mới", "1.66", "ICS", "3.6"], width=13, state="readonly")
-        opt_project.pack(side=tk.LEFT, padx=(4, 14))
-        opt_project.bind("<<ComboboxSelected>>", lambda _: self.apply_filter())
+        self.cbo_filter_project = ttk.Combobox(filter_frame, textvariable=self.var_filter_project,
+                                               values=["TẤT CẢ"], width=20, state="readonly")
+        self.cbo_filter_project.pack(side=tk.LEFT, padx=(4, 14))
+        self.cbo_filter_project.bind("<<ComboboxSelected>>", lambda _: self.apply_filter())
 
         tk.Label(filter_frame, text="TRẠNG THÁI:", bg=BG_PANEL, fg=FG_CYAN, font=("Consolas", 9, "bold")).pack(side=tk.LEFT)
         self.var_filter_status = tk.StringVar(value="TẤT CẢ")
@@ -74,48 +74,60 @@ class DashboardFrame(tk.Frame):
         )
         self.btn_refresh.pack(side=tk.LEFT, padx=4)
 
+        self.btn_assign_proj = tk.Button(
+            filter_frame, text="[ 📁 ĐỔI DỰ ÁN ]", font=("Consolas", 9, "bold"),
+            bg="#0F2D3A", fg=FG_CYAN, activebackground="#154B60", activeforeground="#FFFFFF",
+            relief="flat", bd=0, highlightthickness=1, highlightbackground=FG_CYAN,
+            padx=10, pady=4, cursor="hand2", command=self.assign_project_dialog
+        )
+        self.btn_assign_proj.pack(side=tk.LEFT, padx=4)
+
         self.btn_copy_ad = tk.Button(
-            filter_frame, text="[ 📋 SAO CHÉP ANYDESK ]", font=("Consolas", 9, "bold"),
+            filter_frame, text="[ 📋 CHÉP ANYDESK ]", font=("Consolas", 9, "bold"),
             bg=BG_PANEL, fg=FG_AMBER, activebackground="#3A2805", activeforeground="#FFFFFF",
             relief="flat", bd=0, highlightthickness=1, highlightbackground=FG_AMBER,
             padx=10, pady=4, cursor="hand2", command=self.copy_selected_anydesk
         )
-        self.btn_copy_ad.pack(side=tk.LEFT, padx=6)
+        self.btn_copy_ad.pack(side=tk.LEFT, padx=4)
 
         self.btn_open_ad = tk.Button(
             filter_frame, text="[ ⚡ MỞ ANYDESK ]", font=("Consolas", 9, "bold"),
-            bg=BG_PANEL, fg=FG_CYAN, activebackground="#073642", activeforeground="#FFFFFF",
-            relief="flat", bd=0, highlightthickness=1, highlightbackground=FG_CYAN,
+            bg=BG_PANEL, fg=FG_MATRIX, activebackground="#073642", activeforeground="#FFFFFF",
+            relief="flat", bd=0, highlightthickness=1, highlightbackground=BORDER_NEON,
             padx=10, pady=4, cursor="hand2", command=self.open_selected_anydesk
         )
-        self.btn_open_ad.pack(side=tk.LEFT, padx=6)
+        self.btn_open_ad.pack(side=tk.LEFT, padx=4)
 
         # 3. BẢNG DANH SÁCH THIẾT BỊ
         table_frame = tk.Frame(self, bg=BG_PANEL, padx=2, pady=2, highlightthickness=1, highlightbackground=BORDER_NEON)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(3, 8))
 
-        columns = ("stt", "mac", "anydesk", "project", "state_label", "last_seen", "app_ver", "storage", "task")
+        columns = ("stt", "mac", "anydesk", "project", "software", "mac_ics", "state_label", "last_seen", "app_ver", "storage", "task")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
 
         self.tree.heading("stt", text="STT")
-        self.tree.heading("mac", text="MAC ADDRESS")
+        self.tree.heading("mac", text="MAC ANDROID")
         self.tree.heading("anydesk", text="ANYDESK ID")
-        self.tree.heading("project", text="DỰ ÁN")
+        self.tree.heading("project", text="DỰ ÁN (ĐỊA BÀN)")
+        self.tree.heading("software", text="PHẦN MỀM")
+        self.tree.heading("mac_ics", text="MÃ ICS")
         self.tree.heading("state_label", text="TRẠNG THÁI")
         self.tree.heading("last_seen", text="PING CUỐI (HEARTBEAT)")
-        self.tree.heading("app_ver", text="APP VERSION")
+        self.tree.heading("app_ver", text="APP VER")
         self.tree.heading("storage", text="TRỐNG (MB)")
         self.tree.heading("task", text="TASK HIỆN TẠI")
 
-        self.tree.column("stt", width=45, anchor="center", stretch=False)
-        self.tree.column("mac", width=160, anchor="center", stretch=False)
-        self.tree.column("anydesk", width=140, anchor="center", stretch=False)
-        self.tree.column("project", width=110, anchor="center", stretch=False)
-        self.tree.column("state_label", width=120, anchor="center", stretch=False)
-        self.tree.column("last_seen", width=170, anchor="center", stretch=False)
-        self.tree.column("app_ver", width=95, anchor="center", stretch=False)
-        self.tree.column("storage", width=90, anchor="center", stretch=False)
-        self.tree.column("task", width=300, anchor="w", stretch=True)
+        self.tree.column("stt", width=42, anchor="center", stretch=False)
+        self.tree.column("mac", width=145, anchor="center", stretch=False)
+        self.tree.column("anydesk", width=125, anchor="center", stretch=False)
+        self.tree.column("project", width=140, anchor="w", stretch=False)
+        self.tree.column("software", width=105, anchor="center", stretch=False)
+        self.tree.column("mac_ics", width=125, anchor="center", stretch=False)
+        self.tree.column("state_label", width=105, anchor="center", stretch=False)
+        self.tree.column("last_seen", width=155, anchor="center", stretch=False)
+        self.tree.column("app_ver", width=80, anchor="center", stretch=False)
+        self.tree.column("storage", width=80, anchor="center", stretch=False)
+        self.tree.column("task", width=200, anchor="w", stretch=True)
 
         self.tree.tag_configure("online", foreground=FG_MATRIX, background=BG_TABLE)
         self.tree.tag_configure("slow", foreground=FG_AMBER, background="#1F1705")
@@ -134,6 +146,9 @@ class DashboardFrame(tk.Frame):
         self.menu.add_command(label="📋 Sao chép Mật khẩu (12345678j)", command=lambda: self._set_clipboard(DEFAULT_ANYDESK_PASS, "Đã sao chép mật khẩu AnyDesk (12345678j)"))
         self.menu.add_command(label="📋 Sao chép AnyDesk ID", command=self.copy_selected_anydesk)
         self.menu.add_command(label="📋 Sao chép MAC Address", command=self.copy_selected_mac)
+        self.menu.add_command(label="📋 Sao chép Mã ICS", command=self.copy_selected_ics)
+        self.menu.add_separator()
+        self.menu.add_command(label="📁 Gán / Đổi Dự Án...", command=self.assign_project_dialog)
         self.menu.add_separator()
         self.menu.add_command(label="🔄 Làm mới dữ liệu", command=self.refresh)
 
@@ -219,6 +234,18 @@ class DashboardFrame(tk.Frame):
         self.is_refreshing = False
         self.btn_refresh.config(text="[ 🔄 LÀM MỚI ]")
         self.lbl_last_sync.config(text=f"Cập nhật: {time.strftime('%H:%M:%S')} ({len(self.devices_data)} thiết bị)")
+
+        # Cập nhật danh sách dự án động vào bộ lọc
+        projects = set()
+        for d in self.devices_data:
+            p = str(d.get("project", "")).strip()
+            if p and p != "None":
+                projects.add(p)
+        sorted_projs = ["TẤT CẢ"] + sorted(list(projects))
+        self.cbo_filter_project["values"] = sorted_projs
+        if self.var_filter_project.get() not in sorted_projs:
+            self.var_filter_project.set("TẤT CẢ")
+
         self.apply_filter()
 
     def apply_filter(self):
@@ -237,7 +264,9 @@ class DashboardFrame(tk.Frame):
         for d in self.devices_data:
             mac = d.get("mac", "")
             ad_id = d.get("anydesk_id", "")
-            proj = d.get("project", "Chưa gán")
+            proj = d.get("project") or "Chưa gán"
+            soft = d.get("software") or "Radio 3.6"
+            mac_ics = d.get("mac_ics") or "-"
             last_seen = d.get("last_seen", "Chưa có")
             app_ver = d.get("app_version", "1.0")
             storage = str(d.get("storage_mb", "0"))
@@ -268,7 +297,7 @@ class DashboardFrame(tk.Frame):
             else:
                 disp_last = "Chưa nhận ping"
 
-            vals = (f"{stt:02d}", mac, ad_id, proj, label, disp_last, app_ver, storage, task)
+            vals = (f"{stt:02d}", mac, ad_id, proj, soft, mac_ics, label, disp_last, app_ver, storage, task)
             self.tree.insert("", tk.END, iid=mac if mac else f"row_{stt}", values=vals, tags=(tag,))
             stt += 1
 
@@ -303,6 +332,58 @@ class DashboardFrame(tk.Frame):
         if vals and len(vals) > 1:
             mac = vals[1]
             self._set_clipboard(mac, f"Đã chép MAC: {mac}")
+
+    def copy_selected_ics(self):
+        sel = self.tree.selection()
+        if not sel: return
+        vals = self.tree.item(sel[0], "values")
+        if vals and len(vals) > 5:
+            ics = vals[5]
+            if ics and ics != "-":
+                self._set_clipboard(ics, f"Đã chép Mã ICS: {ics}")
+            else:
+                messagebox.showinfo("Thông báo", "Thiết bị này chưa có mã ICS")
+
+    def assign_project_dialog(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Thông báo", "Vui lòng chọn ít nhất 1 thiết bị trên bảng")
+            return
+
+        target_macs = []
+        cur_proj = ""
+        for item in sel:
+            vals = self.tree.item(item, "values")
+            if vals and len(vals) > 1:
+                target_macs.append(vals[1])
+                if not cur_proj and len(vals) > 3 and vals[3] != "Chưa gán":
+                    cur_proj = vals[3]
+
+        if not target_macs:
+            return
+
+        prompt_text = f"Nhập tên Dự án mới cho {len(target_macs)} thiết bị được chọn:\n(Ví dụ: Xã Xuyên Mộc (102 box), Huyện Châu Đức, Kho thiết bị...)"
+        new_proj = simpledialog.askstring("Gán / Đổi Dự Án", prompt_text, initialvalue=cur_proj or "Kho thiết bị")
+        if new_proj is None:
+            return
+        new_proj = new_proj.strip()
+        if not new_proj:
+            messagebox.showwarning("Cảnh báo", "Tên dự án không được để trống!")
+            return
+
+        def _worker():
+            ok = False
+            if self.webhook:
+                ok = self.webhook.assign_project(target_macs, new_proj)
+            def _done():
+                if ok:
+                    messagebox.showinfo("Thành công", f"✔ Đã gán {len(target_macs)} thiết bị vào dự án:\n'{new_proj}'")
+                    self.refresh()
+                else:
+                    messagebox.showwarning("Lỗi", "Không thể cập nhật dự án lên Google Sheet. Vui lòng kiểm tra lại mạng!")
+            self.after(0, _done)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def open_selected_anydesk(self):
         sel = self.tree.selection()

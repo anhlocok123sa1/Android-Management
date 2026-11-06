@@ -348,7 +348,7 @@ class AdbEngine:
             return True, (ad_id if ad_id else "Đã cài APK")
         return False, ""
 
-    def install_stage1_flow(self, ip, radio_user, radio_pass, copy_backup, status_cb=None):
+    def install_stage1_flow(self, ip, radio_user, radio_pass, copy_backup, status_cb=None, project_name="Kho thiết bị"):
         def upd(msg, state="running"):
             if status_cb:
                 status_cb(msg, state)
@@ -469,8 +469,8 @@ class AdbEngine:
         )
 
         # 5. Đăng ký lên Sheet / Webhook
-        upd("⏳ [5/7] Đang ghi AnyDesk & MAC lên Sheet...")
-        self.register_device_data("Android Mới", anydesk_id, mac)
+        upd(f"⏳ [5/7] Ghi AnyDesk & MAC lên Sheet (Dự án: {project_name})...")
+        self.register_device_data(project_name, anydesk_id, mac, software="Radio 3.6 (Test)")
 
         # 6. Múi giờ GMT+7
         upd("⏳ [6/7] Đặt múi giờ GMT+7 (Asia/Bangkok)...")
@@ -488,23 +488,23 @@ class AdbEngine:
         self.run_adb_root(ip, "monkey -p com.radiostation -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1", step_name="LAUNCH_RADIO")
         time.sleep(4)
 
-        upd(f"🎉 [PWNED_OK] HOÀN TẤT GĐ1! (AnyDesk: {anydesk_id} | MAC: {mac})", "done")
-        self.log(f"✔ [{ip}] Cài đặt GĐ1 thành công -> AnyDesk: {anydesk_id} | MAC: {mac}")
+        upd(f"🎉 [PWNED_OK] HOÀN TẤT GĐ1! (AnyDesk: {anydesk_id} | MAC: {mac} | Dự án: {project_name})", "done")
+        self.log(f"✔ [{ip}] Cài đặt GĐ1 thành công -> AnyDesk: {anydesk_id} | MAC: {mac} | Dự án: {project_name}")
         return True, mac, anydesk_id
 
-    def register_device_data(self, sheet_name, anydesk_id, mac):
+    def register_device_data(self, project_name, anydesk_id, mac, software="Radio 3.6 (Test)", mac_ics=""):
         # 1. Ghi CSV cục bộ
         csv_file = os.path.join(BASE_DIR, "Danh_sach_Android_Moi_LAN.csv")
         with log_lock:
             write_header = not os.path.isfile(csv_file)
             with open(csv_file, "a", encoding="utf-8") as f:
                 if write_header:
-                    f.write("Thoi_Gian,AnyDesk_ID,MAC\n")
-                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{anydesk_id},{mac}\n")
+                    f.write("Thoi_Gian,AnyDesk_ID,MAC,Du_An,Phan_Mem,MAC_ICS\n")
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{anydesk_id},{mac},{project_name},{software},{mac_ics}\n")
 
         # 2. Gửi Webhook nếu có
         if self.webhook:
             try:
-                self.webhook.register_device(mac, anydesk_id)
+                self.webhook.register_device(mac, anydesk_id, project=project_name, software=software, mac_ics=mac_ics)
             except Exception as e:
                 self.log(f"⚠ Lỗi Webhook register_device: {e}")

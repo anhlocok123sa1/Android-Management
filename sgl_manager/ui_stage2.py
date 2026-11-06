@@ -2,7 +2,7 @@ import json
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from .config import (
     BG_MAIN, BG_PANEL, BG_INPUT, BG_TABLE,
@@ -55,11 +55,25 @@ class Stage2Frame(tk.Frame):
         top_left_bar = tk.Frame(left_frame, bg=BG_PANEL)
         top_left_bar.pack(fill=tk.X, pady=(0, 4))
 
-        tk.Label(top_left_bar, text="DANH SÁCH THIẾT BỊ ONLINE / CHỜ TRIỂN KHAI:",
+        tk.Label(top_left_bar, text="DỰ ÁN:",
                  font=("Consolas", 9, "bold"), bg=BG_PANEL, fg=FG_MATRIX).pack(side=tk.LEFT)
 
+        self.var_filter_project = tk.StringVar(value="TẤT CẢ")
+        self.cbo_filter_project = ttk.Combobox(top_left_bar, textvariable=self.var_filter_project,
+                                               values=["TẤT CẢ"], width=16, state="readonly")
+        self.cbo_filter_project.pack(side=tk.LEFT, padx=(4, 8))
+        self.cbo_filter_project.bind("<<ComboboxSelected>>", lambda _: self._render_devices())
+
+        btn_assign_proj = tk.Button(
+            top_left_bar, text="[ 📁 GÁN DỰ ÁN ]", font=("Consolas", 8, "bold"),
+            bg="#0F2D3A", fg=FG_CYAN, activebackground="#154B60", activeforeground="#FFFFFF",
+            relief="flat", bd=0, highlightthickness=1, highlightbackground=FG_CYAN,
+            padx=6, pady=2, command=self.assign_project_selected
+        )
+        btn_assign_proj.pack(side=tk.LEFT, padx=4)
+
         btn_select_all = tk.Button(
-            top_left_bar, text="[ ☑ CHỌN TẤT CẢ ]", font=("Consolas", 8, "bold"),
+            top_left_bar, text="[ ☑ CHỌN HẾT ]", font=("Consolas", 8, "bold"),
             bg=BG_PANEL, fg=FG_TEXT, activebackground="#14291A", activeforeground="#FFFFFF",
             relief="flat", bd=0, highlightthickness=1, highlightbackground=FG_DIM,
             padx=6, pady=2, command=self.toggle_select_all
@@ -73,21 +87,25 @@ class Stage2Frame(tk.Frame):
         )
         btn_refresh_devs.pack(side=tk.RIGHT, padx=4)
 
-        columns = ("select", "mac", "anydesk", "project", "last_seen", "task")
+        columns = ("select", "mac", "anydesk", "project", "software", "mac_ics", "last_seen", "task")
         self.tree_devs = ttk.Treeview(left_frame, columns=columns, show="headings", height=12)
         self.tree_devs.heading("select", text="[X]")
         self.tree_devs.heading("mac", text="MAC ADDRESS")
         self.tree_devs.heading("anydesk", text="ANYDESK ID")
         self.tree_devs.heading("project", text="DỰ ÁN HIỆN TẠI")
+        self.tree_devs.heading("software", text="PHẦN MỀM")
+        self.tree_devs.heading("mac_ics", text="MÃ ICS")
         self.tree_devs.heading("last_seen", text="PING CUỐI")
         self.tree_devs.heading("task", text="TRẠNG THÁI TASK")
 
-        self.tree_devs.column("select", width=40, anchor="center", stretch=False)
-        self.tree_devs.column("mac", width=145, anchor="center", stretch=False)
-        self.tree_devs.column("anydesk", width=120, anchor="center", stretch=False)
-        self.tree_devs.column("project", width=105, anchor="center", stretch=False)
-        self.tree_devs.column("last_seen", width=150, anchor="center", stretch=False)
-        self.tree_devs.column("task", width=180, anchor="w", stretch=True)
+        self.tree_devs.column("select", width=35, anchor="center", stretch=False)
+        self.tree_devs.column("mac", width=140, anchor="center", stretch=False)
+        self.tree_devs.column("anydesk", width=115, anchor="center", stretch=False)
+        self.tree_devs.column("project", width=130, anchor="w", stretch=False)
+        self.tree_devs.column("software", width=100, anchor="center", stretch=False)
+        self.tree_devs.column("mac_ics", width=115, anchor="center", stretch=False)
+        self.tree_devs.column("last_seen", width=140, anchor="center", stretch=False)
+        self.tree_devs.column("task", width=160, anchor="w", stretch=True)
 
         self.tree_devs.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tree_devs.bind("<ButtonRelease-1>", self.on_device_click)
@@ -100,6 +118,9 @@ class Stage2Frame(tk.Frame):
         self.menu.add_command(label="📋 Sao chép Mật khẩu (12345678j)", command=lambda: self._set_clipboard(DEFAULT_ANYDESK_PASS, "Đã sao chép mật khẩu AnyDesk (12345678j)"))
         self.menu.add_command(label="📋 Sao chép AnyDesk ID", command=self.copy_selected_anydesk)
         self.menu.add_command(label="📋 Sao chép MAC Address", command=self.copy_selected_mac)
+        self.menu.add_command(label="📋 Sao chép Mã ICS", command=self.copy_selected_ics)
+        self.menu.add_separator()
+        self.menu.add_command(label="📁 Gán / Đổi Dự Án...", command=self.assign_project_selected)
 
         scrollbar_l = ttk.Scrollbar(left_frame, orient=tk.VERTICAL, command=self.tree_devs.yview)
         self.tree_devs.configure(yscroll=scrollbar_l.set)
@@ -160,21 +181,41 @@ class Stage2Frame(tk.Frame):
             if not tpls:
                 tpls = [
                     {
-                        "template_name": "deploy_radio_166",
-                        "description": "Gỡ 3.6, cài Radio 1.66",
+                        "template_name": "deploy_radio_36",
+                        "description": "Chốt dự án Radio 3.6 (Đăng xuất tài khoản test, giữ app 3.6)",
                         "steps_json": json.dumps([
-                            {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
-                            {"action": "install_apk", "params": {"file": "radio.apk"}},
-                            {"action": "report_field", "params": {"field": "project", "value": "Radio 1.66"}}
+                            {"action": "exec_cmd", "params": {"command": "am force-stop com.radiostation"}},
+                            {"action": "report_field", "params": {"field": "software", "value": "Radio 3.6"}}
                         ], indent=2)
                     },
                     {
                         "template_name": "deploy_vnpt_ics",
-                        "description": "Gỡ Radio, cài đặt VNPT ICS",
+                        "description": "Chuyển sang VNPT ICS (Gỡ 3.6, cài ICS, tự động lấy MAC ICS lên Sheet)",
                         "steps_json": json.dumps([
                             {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
                             {"action": "install_apk", "params": {"file": "ics-android-box (2.0.0).apk"}},
-                            {"action": "report_field", "params": {"field": "project", "value": "ICS"}}
+                            {"action": "start_app", "params": {"package": "vnpt.smartcomm.radio", "activity": "vnpt.smartcomm.radio.activity.SplashActivity"}},
+                            {"action": "extract_ics_mac", "params": {}},
+                            {"action": "report_field", "params": {"field": "software", "value": "VNPT ICS"}}
+                        ], indent=2)
+                    },
+                    {
+                        "template_name": "deploy_radio_166",
+                        "description": "Chuyển sang Radio 1.66 (Gỡ 3.6, cài Radio 1.66)",
+                        "steps_json": json.dumps([
+                            {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
+                            {"action": "install_apk", "params": {"file": "radio.apk"}},
+                            {"action": "report_field", "params": {"field": "software", "value": "Radio 1.66"}}
+                        ], indent=2)
+                    },
+                    {
+                        "template_name": "deploy_radio_20",
+                        "description": "Nâng cấp Radio 2.0 (Đọc thông tin 14 input từ Google Sheet)",
+                        "steps_json": json.dumps([
+                            {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
+                            {"action": "install_apk", "params": {"file": "Radio2.0.apk"}},
+                            {"action": "fetch_config", "params": {"sheet": "Config_Radio20", "key": "mac"}},
+                            {"action": "report_field", "params": {"field": "software", "value": "Radio 2.0"}}
                         ], indent=2)
                     },
                     {
@@ -223,18 +264,38 @@ class Stage2Frame(tk.Frame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _render_devices(self):
+        # Cập nhật danh sách dự án động vào bộ lọc
+        projects = set()
+        for d in self.devices:
+            p = str(d.get("project", "")).strip()
+            if p and p != "None":
+                projects.add(p)
+        sorted_projs = ["TẤT CẢ"] + sorted(list(projects))
+        self.cbo_filter_project["values"] = sorted_projs
+        if self.var_filter_project.get() not in sorted_projs:
+            self.var_filter_project.set("TẤT CẢ")
+
+        filter_proj = self.var_filter_project.get()
+
         for item in self.tree_devs.get_children():
             self.tree_devs.delete(item)
 
         for d in self.devices:
             mac = d.get("mac", "")
             ad_id = d.get("anydesk_id", "")
-            proj = d.get("project", "Chưa gán")
+            proj = d.get("project") or "Chưa gán"
+            soft = d.get("software") or "Radio 3.6"
+            mac_ics = d.get("mac_ics") or "-"
             last_seen = d.get("last_seen", "Chưa có")
             task = d.get("task_id", "idle")
+
+            # Lọc theo dự án nếu có chọn
+            if filter_proj != "TẤT CẢ" and filter_proj != proj:
+                continue
+
             is_sel = mac in self.selected_macs
 
-            vals = ("[X]" if is_sel else "[ ]", mac, ad_id, proj, last_seen, task)
+            vals = ("[X]" if is_sel else "[ ]", mac, ad_id, proj, soft, mac_ics, last_seen, task)
             self.tree_devs.insert("", tk.END, iid=mac, values=vals)
 
         self.update_summary()
@@ -281,6 +342,54 @@ class Stage2Frame(tk.Frame):
         vals = self.tree_devs.item(sel[0], "values")
         if vals and len(vals) >= 2:
             self._set_clipboard(vals[1], f"Đã chép MAC: {vals[1]}")
+
+    def copy_selected_ics(self):
+        sel = self.tree_devs.selection()
+        if not sel: return
+        vals = self.tree_devs.item(sel[0], "values")
+        if vals and len(vals) > 5:
+            ics = vals[5]
+            if ics and ics != "-":
+                self._set_clipboard(ics, f"Đã chép Mã ICS: {ics}")
+            else:
+                messagebox.showinfo("Thông báo", "Thiết bị này chưa có mã ICS")
+
+    def assign_project_selected(self):
+        target_macs = list(self.selected_macs)
+        # Nếu chưa tick ô chọn nào thì lấy row đang focus
+        if not target_macs:
+            sel = self.tree_devs.selection()
+            if sel:
+                vals = self.tree_devs.item(sel[0], "values")
+                if vals and len(vals) > 1:
+                    target_macs = [vals[1]]
+
+        if not target_macs:
+            messagebox.showinfo("Thông báo", "Vui lòng tick chọn [X] các thiết bị cần gán dự án!")
+            return
+
+        prompt_text = f"Nhập tên Dự án mới cho {len(target_macs)} thiết bị được chọn:\n(Ví dụ: Xã Xuyên Mộc (102 box), Huyện Châu Đức, Kho thiết bị...)"
+        new_proj = simpledialog.askstring("Gán Dự Án Hàng Loạt", prompt_text, initialvalue="Kho thiết bị")
+        if new_proj is None:
+            return
+        new_proj = new_proj.strip()
+        if not new_proj:
+            messagebox.showwarning("Cảnh báo", "Tên dự án không được để trống!")
+            return
+
+        def _worker():
+            ok = False
+            if self.webhook:
+                ok = self.webhook.assign_project(target_macs, new_proj)
+            def _done():
+                if ok:
+                    messagebox.showinfo("Thành công", f"✔ Đã gán {len(target_macs)} thiết bị vào dự án:\n'{new_proj}'")
+                    self.load_devices()
+                else:
+                    messagebox.showwarning("Lỗi", "Không thể cập nhật dự án lên Google Sheet. Vui lòng kiểm tra lại mạng!")
+            self.after(0, _done)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def on_device_click(self, event):
         region = self.tree_devs.identify("region", event.x, event.y)

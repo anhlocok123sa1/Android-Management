@@ -82,6 +82,38 @@ function getSheetHeaders(sheet) {
 }
 
 /**
+ * Đảm bảo các cột yêu cầu có mặt trong sheet. Nếu chưa có thì tự động append vào cuối header.
+ * @param {Sheet} sheet
+ * @param {string[]} requiredHeaders
+ * @return {string[]} Danh sách headers sau khi đã đảm bảo
+ */
+function ensureHeaders(sheet, requiredHeaders) {
+  var existing = getSheetHeaders(sheet);
+  if (existing.length === 0) {
+    sheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
+    sheet.getRange(1, 1, 1, requiredHeaders.length).setFontWeight("bold");
+    sheet.getRange(1, 1, 1, requiredHeaders.length).setBackground("#EFEFEF");
+    sheet.setFrozenRows(1);
+    return requiredHeaders;
+  }
+  var missing = [];
+  var existingLower = existing.map(function(h) { return String(h).trim().toLowerCase(); });
+  for (var i = 0; i < requiredHeaders.length; i++) {
+    if (existingLower.indexOf(String(requiredHeaders[i]).trim().toLowerCase()) === -1) {
+      missing.push(requiredHeaders[i]);
+    }
+  }
+  if (missing.length > 0) {
+    var startCol = existing.length + 1;
+    sheet.getRange(1, startCol, 1, missing.length).setValues([missing]);
+    sheet.getRange(1, startCol, 1, missing.length).setFontWeight("bold");
+    sheet.getRange(1, startCol, 1, missing.length).setBackground("#EFEFEF");
+    return existing.concat(missing);
+  }
+  return existing;
+}
+
+/**
  * Helper tìm row theo key (keyCol), cập nhật nếu đã có hoặc chèn thêm row mới nếu chưa có.
  * @param {Sheet} sheet - Google Sheet cần thao tác
  * @param {string|number} keyCol - Tên cột (string) hoặc chỉ số cột 1-based (number) làm khóa
@@ -283,6 +315,8 @@ function routeAction(action, params) {
       return handleCompleteTask(params);
     case "register_device":
       return handleRegisterDevice(params);
+    case "assign_project":
+      return handleAssignProject(params);
     case "create_task":
       return handleCreateTask(params);
     case "save_template":
@@ -558,15 +592,26 @@ function handleCompleteTask(params) {
       tasksSheet.getRange(targetRowIdx, resultColIdx + 1).setValue(resultStr);
     }
 
-    // Cập nhật Devices.status và Devices.task_id=''
+    // Cập nhật Devices.status, Devices.task_id='', và các trường báo cáo (software, mac_ics, project...)
     if (mac) {
       var devicesSheet = getSheet("Devices");
-      upsertRow(devicesSheet, "mac", mac, {
+      var updateDevObj = {
         mac: mac,
         status: "online",
         task_id: "",
         last_seen: nowIso
-      });
+      };
+      if (params.mac_ics) updateDevObj.mac_ics = String(params.mac_ics).trim();
+      if (params.software) updateDevObj.software = String(params.software).trim();
+      if (params.project) updateDevObj.project = String(params.project).trim();
+
+      // Trích xuất tự động từ chuỗi kết quả nếu có
+      var mIcs = resultStr.match(/mac_ics=([a-fA-F0-9]+)/i);
+      if (mIcs) updateDevObj.mac_ics = mIcs[1];
+      var mSoft = resultStr.match(/software=([^,\n;]+)/i);
+      if (mSoft) updateDevObj.software = mSoft[1].trim();
+
+      upsertRow(devicesSheet, "mac", mac, updateDevObj);
     }
 
     return {
@@ -598,6 +643,7 @@ function handleRegisterDevice(params) {
 
   try {
     var devicesSheet = getSheet("Devices");
+    ensureHeaders(devicesSheet, ["mac", "anydesk_id", "project", "software", "mac_ics", "status", "last_seen", "app_version", "storage_mb", "task_id", "iot_id", "imei_sim", "notes"]);
     var headers = getSheetHeaders(devicesSheet);
     var macColIdx = headers.indexOf("mac");
     var anydeskColIdx = headers.indexOf("anydesk_id");
@@ -627,13 +673,29 @@ function handleRegisterDevice(params) {
       if (lastSeenColIdx !== -1) {
         devicesSheet.getRange(existingRowIdx, lastSeenColIdx + 1).setValue(nowIso);
       }
+      if (params.project) {
+        var projColIdx = headers.indexOf("project");
+        if (projColIdx !== -1) devicesSheet.getRange(existingRowIdx, projColIdx + 1).setValue(params.project);
+      }
+      if (params.software) {
+        var softColIdx = headers.indexOf("software");
+        if (softColIdx !== -1) devicesSheet.getRange(existingRowIdx, softColIdx + 1).setValue(params.software);
+      }
+      if (params.mac_ics) {
+        var icsColIdx = headers.indexOf("mac_ics");
+        if (icsColIdx !== -1) devicesSheet.getRange(existingRowIdx, icsColIdx + 1).setValue(params.mac_ics);
+      }
       isNew = false;
     } else {
       // Chưa có -> insert row mới với status='new'
       upsertRow(devicesSheet, "mac", mac, {
         mac: mac,
         anydesk_id: anydeskId,
-        project: params.project || "",
+        project: params.project || "Kho thiết bị",
+        software: params.software || "Radio 3.6 (Test)",
+        mac_ics: params.mac_ics || "",
+        iot_id: params.iot_id || "",
+        imei_sim: params.imei_sim || "",
         status: "new",
         last_seen: nowIso,
         app_version: params.app_version || "",
@@ -647,6 +709,85 @@ function handleRegisterDevice(params) {
     return {
       status: "ok",
       is_new: isNew
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * POST action=assign_project
+ * Gán danh sách box (target_macs) vào một Dự án cụ thể (ví dụ: 'Xã Xuyên Mộc') và cập nhật loại phần mềm (software).
+ */
+function handleAssignProject(params) {
+  var projectName = params.project ? String(params.project).trim() : "";
+  var software = params.software ? String(params.software).trim() : "";
+  var targetMacs = params.target_macs;
+
+  if (!projectName) {
+    return errorResponse("Thiếu tham số bắt buộc: project (Tên dự án)");
+  }
+
+  if (typeof targetMacs === "string") {
+    try {
+      targetMacs = JSON.parse(targetMacs);
+    } catch (e) {
+      targetMacs = targetMacs.split(",").map(function(m) { return m.trim(); }).filter(Boolean);
+    }
+  }
+
+  if (!Array.isArray(targetMacs) || targetMacs.length === 0) {
+    return errorResponse("target_macs phải là danh sách mảng các địa chỉ MAC");
+  }
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+  } catch (e) {
+    return errorResponse("Hệ thống đang bận, vui lòng thử lại sau.");
+  }
+
+  try {
+    var devicesSheet = getSheet("Devices");
+    ensureHeaders(devicesSheet, ["mac", "anydesk_id", "project", "software", "mac_ics", "status", "last_seen", "app_version", "storage_mb", "task_id", "iot_id", "imei_sim", "notes"]);
+    var headers = getSheetHeaders(devicesSheet);
+    var macColIdx = headers.indexOf("mac");
+    var projColIdx = headers.indexOf("project");
+    var softColIdx = headers.indexOf("software");
+
+    if (macColIdx === -1 || projColIdx === -1) {
+      return errorResponse("Sheet Devices thiếu cột mac hoặc project.");
+    }
+
+    var lastRow = devicesSheet.getLastRow();
+    var updatedCount = 0;
+
+    if (lastRow > 1) {
+      var numCols = headers.length;
+      var values = devicesSheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+      var macSet = {};
+      for (var j = 0; j < targetMacs.length; j++) {
+        macSet[String(targetMacs[j]).trim().toLowerCase()] = true;
+      }
+
+      for (var i = 0; i < values.length; i++) {
+        var rowMac = String(values[i][macColIdx]).trim().toLowerCase();
+        if (macSet[rowMac]) {
+          var rowNum = i + 2;
+          devicesSheet.getRange(rowNum, projColIdx + 1).setValue(projectName);
+          if (softColIdx !== -1 && software) {
+            devicesSheet.getRange(rowNum, softColIdx + 1).setValue(software);
+          }
+          updatedCount++;
+        }
+      }
+    }
+
+    return {
+      status: "ok",
+      updated_count: updatedCount,
+      project: projectName,
+      software: software
     };
   } finally {
     lock.releaseLock();
@@ -794,7 +935,11 @@ function handleGetDevices(params) {
     return {
       mac: String(r.mac || ""),
       anydesk_id: String(r.anydesk_id || ""),
-      project: String(r.project || ""),
+      project: String(r.project || "Kho thiết bị"),
+      software: String(r.software || "Radio 3.6"),
+      mac_ics: String(r.mac_ics || ""),
+      iot_id: String(r.iot_id || ""),
+      imei_sim: String(r.imei_sim || ""),
       status: String(r.status || ""),
       last_seen: String(r.last_seen || ""),
       app_version: String(r.app_version || ""),
@@ -885,7 +1030,7 @@ function setupSheets() {
   var sheetDefinitions = [
     {
       name: "Devices",
-      headers: ["mac", "anydesk_id", "project", "status", "last_seen", "app_version", "storage_mb", "task_id", "notes"]
+      headers: ["mac", "anydesk_id", "project", "software", "mac_ics", "status", "last_seen", "app_version", "storage_mb", "task_id", "iot_id", "imei_sim", "notes"]
     },
     {
       name: "Tasks",
@@ -906,13 +1051,63 @@ function setupSheets() {
     if (!sheet) {
       sheet = ss.insertSheet(def.name);
     }
-    if (sheet.getLastRow() === 0) {
-      sheet.getRange(1, 1, 1, def.headers.length).setValues([def.headers]);
-      sheet.getRange(1, 1, 1, def.headers.length).setFontWeight("bold");
-      sheet.getRange(1, 1, 1, def.headers.length).setBackground("#EFEFEF");
-      sheet.setFrozenRows(1);
-    }
+    ensureHeaders(sheet, def.headers);
   });
+
+  // Khởi tạo các mẫu kịch bản dự án mặc định nếu sheet Templates chưa có dữ liệu
+  var tplSheet = ss.getSheetByName("Templates");
+  if (tplSheet && tplSheet.getLastRow() <= 1) {
+    var nowIso = new Date().toISOString();
+    var defaultTemplates = [
+      [
+        "deploy_radio_36",
+        JSON.stringify([
+          {"action": "exec_cmd", "params": {"command": "am force-stop com.radiostation"}},
+          {"action": "report_field", "params": {"field": "software", "value": "Radio 3.6"}}
+        ], null, 2),
+        "Chốt dự án Radio 3.6 (Đăng xuất tài khoản test, giữ app 3.6)",
+        "admin",
+        nowIso
+      ],
+      [
+        "deploy_vnpt_ics",
+        JSON.stringify([
+          {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
+          {"action": "install_apk", "params": {"file": "ics-android-box (2.0.0).apk"}},
+          {"action": "start_app", "params": {"package": "vnpt.smartcomm.radio", "activity": "vnpt.smartcomm.radio.activity.SplashActivity"}},
+          {"action": "extract_ics_mac", "params": {}},
+          {"action": "report_field", "params": {"field": "software", "value": "VNPT ICS"}}
+        ], null, 2),
+        "Chuyển sang VNPT ICS (Gỡ 3.6, cài ICS, tự động lấy MAC ICS lên Sheet)",
+        "admin",
+        nowIso
+      ],
+      [
+        "deploy_radio_166",
+        JSON.stringify([
+          {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
+          {"action": "install_apk", "params": {"file": "radio.apk"}},
+          {"action": "report_field", "params": {"field": "software", "value": "Radio 1.66"}}
+        ], null, 2),
+        "Chuyển sang Radio 1.66 (Gỡ 3.6, cài Radio 1.66)",
+        "admin",
+        nowIso
+      ],
+      [
+        "deploy_radio_20",
+        JSON.stringify([
+          {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
+          {"action": "install_apk", "params": {"file": "Radio2.0.apk"}},
+          {"action": "fetch_config", "params": {"sheet": "Config_Radio20", "key": "mac"}},
+          {"action": "report_field", "params": {"field": "software", "value": "Radio 2.0"}}
+        ], null, 2),
+        "Nâng cấp Radio 2.0 (Đọc thông tin 14 input từ Google Sheet)",
+        "admin",
+        nowIso
+      ]
+    ];
+    tplSheet.getRange(2, 1, defaultTemplates.length, 5).setValues(defaultTemplates);
+  }
 
   // Xóa sheet mặc định ("Sheet1" / "Trang tính 1") nếu đang trống và đã có các sheet khác
   var defaultSheet = ss.getSheetByName("Sheet1") || ss.getSheetByName("Trang tính 1");
