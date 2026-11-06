@@ -466,6 +466,16 @@ class LanMassInstallerApp:
 
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tree.bind("<ButtonRelease-1>", self.on_tree_click)
+        self.tree.bind("<Double-1>", lambda _: self.open_selected_anydesk())
+        self.tree.bind("<Button-3>", self.show_context_menu)
+
+        # Context Menu chuột phải
+        self.menu = tk.Menu(self.root, tearoff=0, bg=BG_PANEL, fg=FG_TEXT, activebackground="#0F381E", activeforeground="#FFFFFF")
+        self.menu.add_command(label="💻 Mở AnyDesk (Tự động nạp Pass: 12345678j)", command=self.open_selected_anydesk)
+        self.menu.add_command(label="📋 Sao chép Mật khẩu (12345678j)", command=lambda: self._set_clipboard("12345678j", "Đã sao chép mật khẩu AnyDesk (12345678j)"))
+        self.menu.add_command(label="📋 Sao chép AnyDesk ID", command=self.copy_selected_anydesk)
+        self.menu.add_command(label="📋 Sao chép MAC Address", command=self.copy_selected_mac)
+        self.menu.add_command(label="📋 Sao chép IP Mạch", command=self.copy_selected_ip)
 
         scrollbar = ttk.Scrollbar(
             table_frame, orient=tk.VERTICAL, command=self.tree.yview
@@ -682,6 +692,66 @@ class LanMassInstallerApp:
                         return
                     curr = self.devices[row_id]["selected"]
                 self.upsert_device_row(row_id, selected=not curr)
+
+    def _set_clipboard(self, text, notify_msg=None):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        if notify_msg:
+            messagebox.showinfo("Đã sao chép", notify_msg)
+
+    def show_context_menu(self, event):
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.menu.post(event.x_root, event.y_root)
+
+    def open_selected_anydesk(self):
+        sel = self.tree.selection()
+        if not sel: return
+        vals = self.tree.item(sel[0], "values")
+        if not vals or len(vals) < 5: return
+        ad_id = vals[4]
+        if not ad_id or "Chưa" in ad_id or "DANG" in ad_id:
+            messagebox.showwarning("Cảnh báo", f"Mạch {vals[2]} chưa có mã AnyDesk ID!")
+            return
+        
+        clean_id = re.sub(r"\D", "", str(ad_id))
+        self._set_clipboard("12345678j")
+        anydesk_paths = [
+            os.path.expandvars(r"%ProgramFiles(x86)%\AnyDesk\AnyDesk.exe"),
+            os.path.expandvars(r"%ProgramFiles%\AnyDesk\AnyDesk.exe"),
+            os.path.expandvars(r"%LocalAppData%\AnyDesk\AnyDesk.exe"),
+            os.path.expandvars(r"%AppData%\AnyDesk\AnyDesk.exe"),
+            "anydesk"
+        ]
+        exe = next((p for p in anydesk_paths if os.path.isfile(p)), "anydesk")
+        cmd = f'echo 12345678j| "{exe}" {clean_id} --with-password'
+        try:
+            subprocess.Popen(cmd, shell=True, creationflags=CREATE_NO_WINDOW)
+            self.log(f"💻 Đang mở AnyDesk {clean_id} (Đã tự nạp mật khẩu: 12345678j)...")
+        except Exception as e:
+            messagebox.showwarning("AnyDesk", f"Lỗi mở AnyDesk: {e}")
+
+    def copy_selected_anydesk(self):
+        sel = self.tree.selection()
+        if not sel: return
+        vals = self.tree.item(sel[0], "values")
+        if vals and len(vals) >= 5:
+            self._set_clipboard(vals[4], f"Đã chép AnyDesk ID: {vals[4]}")
+
+    def copy_selected_mac(self):
+        sel = self.tree.selection()
+        if not sel: return
+        vals = self.tree.item(sel[0], "values")
+        if vals and len(vals) >= 4:
+            self._set_clipboard(vals[3], f"Đã chép MAC: {vals[3]}")
+
+    def copy_selected_ip(self):
+        sel = self.tree.selection()
+        if not sel: return
+        vals = self.tree.item(sel[0], "values")
+        if vals and len(vals) >= 3:
+            self._set_clipboard(vals[2], f"Đã chép IP: {vals[2]}")
 
     def auto_detect_subnet(self):
         try:

@@ -1,4 +1,7 @@
 import os
+import re
+import shutil
+import subprocess
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -8,6 +11,9 @@ WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxqawYpW8SebK0EK21Cl7C2uw
 
 # Cổng kết nối ADB qua mạng LAN
 ADB_PORT = 5555
+
+# Mật khẩu AnyDesk mặc định cho thiết bị
+DEFAULT_ANYDESK_PASS = "12345678j"
 
 # Tên các file APK tiêu chuẩn
 APK_AUTOSETUP = "00_AutoSetup.apk"
@@ -33,3 +39,54 @@ FG_RED = "#FF1744"
 FG_DIM = "#4E7A5B"
 FG_TEXT = "#C8F7D2"
 BORDER_NEON = "#008F24"
+
+def get_anydesk_exe():
+    """Tìm đường dẫn file AnyDesk.exe trên hệ thống Windows."""
+    paths = [
+        os.path.expandvars(r"%ProgramFiles(x86)%\AnyDesk\AnyDesk.exe"),
+        os.path.expandvars(r"%ProgramFiles%\AnyDesk\AnyDesk.exe"),
+        os.path.expandvars(r"%LocalAppData%\AnyDesk\AnyDesk.exe"),
+        os.path.expandvars(r"%AppData%\AnyDesk\AnyDesk.exe"),
+        "anydesk"
+    ]
+    for p in paths:
+        if os.path.isfile(p):
+            return p
+    if shutil.which("anydesk"):
+        return "anydesk"
+    return None
+
+def open_anydesk_session(ad_id: str, password: str = DEFAULT_ANYDESK_PASS, clipboard_fn=None):
+    """
+    Khởi chạy AnyDesk kết nối tới remote ID và tự động nạp mật khẩu unattended access qua pipe (--with-password).
+    Đồng thời sao chép mật khẩu vào Clipboard dự phòng.
+    """
+    if not ad_id or "Chưa" in str(ad_id) or "KHONG" in str(ad_id):
+        return False, "Thiết bị này chưa có AnyDesk ID!"
+    
+    clean_id = re.sub(r"\D", "", str(ad_id))
+    if not clean_id:
+        return False, "Mã AnyDesk ID không hợp lệ!"
+
+    # Sao chép sẵn mật khẩu vào Clipboard để người dùng có thể Ctrl+V bất cứ lúc nào
+    if clipboard_fn:
+        try:
+            clipboard_fn(password)
+        except Exception:
+            pass
+
+    exe = get_anydesk_exe()
+    if not exe:
+        return False, f"Không tìm thấy file AnyDesk.exe trên máy tính.\nĐã sao chép mật khẩu ({password}) vào Clipboard."
+
+    CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+    cmd = f'echo {password}| "{exe}" {clean_id} --with-password'
+    try:
+        subprocess.Popen(
+            cmd,
+            shell=True,
+            creationflags=CREATE_NO_WINDOW
+        )
+        return True, f"Đang kết nối AnyDesk ID: {clean_id} (Đã tự động nạp mật khẩu: {password})"
+    except Exception as e:
+        return False, f"Lỗi khởi chạy AnyDesk: {e}"

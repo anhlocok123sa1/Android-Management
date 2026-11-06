@@ -14,7 +14,8 @@ from .config import (
     BASE_DIR, ADB_PORT, DEBUG_LOG_FILE,
     APK_AUTOSETUP, APK_ANYDESK, APK_ADCONTROL, APK_RADIO_36,
     BG_MAIN, BG_PANEL, BG_INPUT, BG_TABLE,
-    FG_MATRIX, FG_CYAN, FG_AMBER, FG_RED, FG_DIM, FG_TEXT, BORDER_NEON
+    FG_MATRIX, FG_CYAN, FG_AMBER, FG_RED, FG_DIM, FG_TEXT, BORDER_NEON,
+    DEFAULT_ANYDESK_PASS, open_anydesk_session
 )
 from .adb_engine import AdbEngine
 
@@ -196,6 +197,16 @@ class Stage1Frame(tk.Frame):
 
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tree.bind("<ButtonRelease-1>", self.on_tree_click)
+        self.tree.bind("<Double-1>", lambda _: self.open_selected_anydesk())
+        self.tree.bind("<Button-3>", self.show_context_menu)
+
+        # Context Menu chuột phải
+        self.menu = tk.Menu(self, tearoff=0, bg=BG_PANEL, fg=FG_TEXT, activebackground="#0F381E", activeforeground="#FFFFFF")
+        self.menu.add_command(label="💻 Mở AnyDesk (Tự động nạp Pass: 12345678j)", command=self.open_selected_anydesk)
+        self.menu.add_command(label="📋 Sao chép Mật khẩu (12345678j)", command=lambda: self._set_clipboard(DEFAULT_ANYDESK_PASS, "Đã sao chép mật khẩu AnyDesk (12345678j)"))
+        self.menu.add_command(label="📋 Sao chép AnyDesk ID", command=self.copy_selected_anydesk)
+        self.menu.add_command(label="📋 Sao chép MAC Address", command=self.copy_selected_mac)
+        self.menu.add_command(label="📋 Sao chép IP Mạch", command=self.copy_selected_ip)
 
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscroll=scrollbar.set)
@@ -299,6 +310,58 @@ class Stage1Frame(tk.Frame):
             if row_id and row_id in self.devices and row_id not in self.active_installing_ips:
                 curr = self.devices[row_id]["selected"]
                 self.upsert_device_row(row_id, selected=not curr)
+
+    def _set_clipboard(self, text, notify_msg=None):
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        if notify_msg:
+            messagebox.showinfo("Đã sao chép", notify_msg)
+
+    def show_context_menu(self, event):
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.menu.post(event.x_root, event.y_root)
+
+    def open_selected_anydesk(self):
+        sel = self.tree.selection()
+        if not sel: return
+        vals = self.tree.item(sel[0], "values")
+        if not vals or len(vals) < 5: return
+        ad_id = vals[4]
+        if not ad_id or "Chưa" in ad_id or "DANG" in ad_id:
+            messagebox.showwarning("Cảnh báo", f"Mạch {vals[2]} chưa có mã AnyDesk ID!")
+            return
+        ok, msg = open_anydesk_session(
+            ad_id,
+            password=DEFAULT_ANYDESK_PASS,
+            clipboard_fn=lambda p: self._set_clipboard(p)
+        )
+        if not ok:
+            messagebox.showwarning("AnyDesk", msg)
+        else:
+            self.log(f"💻 {msg}")
+
+    def copy_selected_anydesk(self):
+        sel = self.tree.selection()
+        if not sel: return
+        vals = self.tree.item(sel[0], "values")
+        if vals and len(vals) >= 5:
+            self._set_clipboard(vals[4], f"Đã chép AnyDesk ID: {vals[4]}")
+
+    def copy_selected_mac(self):
+        sel = self.tree.selection()
+        if not sel: return
+        vals = self.tree.item(sel[0], "values")
+        if vals and len(vals) >= 4:
+            self._set_clipboard(vals[3], f"Đã chép MAC: {vals[3]}")
+
+    def copy_selected_ip(self):
+        sel = self.tree.selection()
+        if not sel: return
+        vals = self.tree.item(sel[0], "values")
+        if vals and len(vals) >= 3:
+            self._set_clipboard(vals[2], f"Đã chép IP: {vals[2]}")
 
     def auto_detect_subnet(self):
         try:

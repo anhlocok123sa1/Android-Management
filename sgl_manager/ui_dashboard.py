@@ -8,7 +8,8 @@ from tkinter import messagebox, ttk
 
 from .config import (
     BG_MAIN, BG_PANEL, BG_INPUT, BG_TABLE,
-    FG_MATRIX, FG_CYAN, FG_AMBER, FG_RED, FG_DIM, FG_TEXT, BORDER_NEON
+    FG_MATRIX, FG_CYAN, FG_AMBER, FG_RED, FG_DIM, FG_TEXT, BORDER_NEON,
+    DEFAULT_ANYDESK_PASS, open_anydesk_session
 )
 
 class DashboardFrame(tk.Frame):
@@ -129,13 +130,15 @@ class DashboardFrame(tk.Frame):
 
         # Context Menu chuột phải
         self.menu = tk.Menu(self, tearoff=0, bg=BG_PANEL, fg=FG_TEXT, activebackground="#0F381E", activeforeground="#FFFFFF")
-        self.menu.add_command(label="Mở AnyDesk", command=self.open_selected_anydesk)
-        self.menu.add_command(label="Sao chép AnyDesk ID", command=self.copy_selected_anydesk)
-        self.menu.add_command(label="Sao chép MAC Address", command=self.copy_selected_mac)
+        self.menu.add_command(label="💻 Mở AnyDesk (Tự động nạp Pass: 12345678j)", command=self.open_selected_anydesk)
+        self.menu.add_command(label="📋 Sao chép Mật khẩu (12345678j)", command=lambda: self._set_clipboard(DEFAULT_ANYDESK_PASS, "Đã sao chép mật khẩu AnyDesk (12345678j)"))
+        self.menu.add_command(label="📋 Sao chép AnyDesk ID", command=self.copy_selected_anydesk)
+        self.menu.add_command(label="📋 Sao chép MAC Address", command=self.copy_selected_mac)
         self.menu.add_separator()
-        self.menu.add_command(label="Làm mới dữ liệu", command=self.refresh)
+        self.menu.add_command(label="🔄 Làm mới dữ liệu", command=self.refresh)
 
         self.tree.bind("<Button-3>", self.show_context_menu)
+        self.tree.bind("<Double-1>", lambda _: self.open_selected_anydesk())
 
     def show_context_menu(self, event):
         item = self.tree.identify_row(event.y)
@@ -277,6 +280,12 @@ class DashboardFrame(tk.Frame):
         self.refresh()
         self.after(60000, self.auto_refresh_loop)
 
+    def _set_clipboard(self, text, notify_msg=None):
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        if notify_msg:
+            messagebox.showinfo("Đã sao chép", notify_msg)
+
     def copy_selected_anydesk(self):
         sel = self.tree.selection()
         if not sel:
@@ -285,9 +294,7 @@ class DashboardFrame(tk.Frame):
         vals = self.tree.item(sel[0], "values")
         if vals and len(vals) > 2:
             ad_id = vals[2]
-            self.clipboard_clear()
-            self.clipboard_append(ad_id)
-            messagebox.showinfo("Đã sao chép", f"Đã chép AnyDesk ID: {ad_id}")
+            self._set_clipboard(ad_id, f"Đã chép AnyDesk ID: {ad_id}")
 
     def copy_selected_mac(self):
         sel = self.tree.selection()
@@ -295,9 +302,7 @@ class DashboardFrame(tk.Frame):
         vals = self.tree.item(sel[0], "values")
         if vals and len(vals) > 1:
             mac = vals[1]
-            self.clipboard_clear()
-            self.clipboard_append(mac)
-            messagebox.showinfo("Đã sao chép", f"Đã chép MAC: {mac}")
+            self._set_clipboard(mac, f"Đã chép MAC: {mac}")
 
     def open_selected_anydesk(self):
         sel = self.tree.selection()
@@ -311,23 +316,10 @@ class DashboardFrame(tk.Frame):
             messagebox.showwarning("Cảnh báo", "Thiết bị này chưa có AnyDesk ID!")
             return
 
-        # Gọi AnyDesk client trên Windows
-        anydesk_paths = [
-            "anydesk",
-            os.path.expandvars(r"%ProgramFiles(x86)%\AnyDesk\AnyDesk.exe"),
-            os.path.expandvars(r"%ProgramFiles%\AnyDesk\AnyDesk.exe"),
-            os.path.expandvars(r"%LocalAppData%\AnyDesk\AnyDesk.exe")
-        ]
-        opened = False
-        for p in anydesk_paths:
-            try:
-                subprocess.Popen([p, ad_id])
-                opened = True
-                break
-            except Exception:
-                continue
-
-        if not opened:
-            self.clipboard_clear()
-            self.clipboard_append(ad_id)
-            messagebox.showinfo("AnyDesk", f"Không tìm thấy phần mềm AnyDesk trên máy.\nĐã sao chép ID: {ad_id} vào Clipboard!")
+        ok, msg = open_anydesk_session(
+            ad_id,
+            password=DEFAULT_ANYDESK_PASS,
+            clipboard_fn=lambda p: self._set_clipboard(p)
+        )
+        if not ok:
+            messagebox.showwarning("AnyDesk", msg)

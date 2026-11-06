@@ -6,7 +6,8 @@ from tkinter import messagebox, ttk
 
 from .config import (
     BG_MAIN, BG_PANEL, BG_INPUT, BG_TABLE,
-    FG_MATRIX, FG_CYAN, FG_AMBER, FG_RED, FG_DIM, FG_TEXT, BORDER_NEON
+    FG_MATRIX, FG_CYAN, FG_AMBER, FG_RED, FG_DIM, FG_TEXT, BORDER_NEON,
+    DEFAULT_ANYDESK_PASS, open_anydesk_session
 )
 
 class Stage2Frame(tk.Frame):
@@ -90,6 +91,15 @@ class Stage2Frame(tk.Frame):
 
         self.tree_devs.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tree_devs.bind("<ButtonRelease-1>", self.on_device_click)
+        self.tree_devs.bind("<Double-1>", lambda _: self.open_selected_anydesk())
+        self.tree_devs.bind("<Button-3>", self.show_context_menu)
+
+        # Context Menu chuột phải
+        self.menu = tk.Menu(self, tearoff=0, bg=BG_PANEL, fg=FG_TEXT, activebackground="#0F381E", activeforeground="#FFFFFF")
+        self.menu.add_command(label="💻 Mở AnyDesk (Tự động nạp Pass: 12345678j)", command=self.open_selected_anydesk)
+        self.menu.add_command(label="📋 Sao chép Mật khẩu (12345678j)", command=lambda: self._set_clipboard(DEFAULT_ANYDESK_PASS, "Đã sao chép mật khẩu AnyDesk (12345678j)"))
+        self.menu.add_command(label="📋 Sao chép AnyDesk ID", command=self.copy_selected_anydesk)
+        self.menu.add_command(label="📋 Sao chép MAC Address", command=self.copy_selected_mac)
 
         scrollbar_l = ttk.Scrollbar(left_frame, orient=tk.VERTICAL, command=self.tree_devs.yview)
         self.tree_devs.configure(yscroll=scrollbar_l.set)
@@ -228,6 +238,49 @@ class Stage2Frame(tk.Frame):
             self.tree_devs.insert("", tk.END, iid=mac, values=vals)
 
         self.update_summary()
+
+    def _set_clipboard(self, text, notify_msg=None):
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        if notify_msg:
+            messagebox.showinfo("Đã sao chép", notify_msg)
+
+    def show_context_menu(self, event):
+        item = self.tree_devs.identify_row(event.y)
+        if item:
+            self.tree_devs.selection_set(item)
+            self.menu.post(event.x_root, event.y_root)
+
+    def open_selected_anydesk(self):
+        sel = self.tree_devs.selection()
+        if not sel: return
+        vals = self.tree_devs.item(sel[0], "values")
+        if not vals or len(vals) < 3: return
+        ad_id = vals[2]
+        if not ad_id or "Chưa" in ad_id:
+            messagebox.showwarning("Cảnh báo", f"Thiết bị {vals[1]} chưa có AnyDesk ID!")
+            return
+        ok, msg = open_anydesk_session(
+            ad_id,
+            password=DEFAULT_ANYDESK_PASS,
+            clipboard_fn=lambda p: self._set_clipboard(p)
+        )
+        if not ok:
+            messagebox.showwarning("AnyDesk", msg)
+
+    def copy_selected_anydesk(self):
+        sel = self.tree_devs.selection()
+        if not sel: return
+        vals = self.tree_devs.item(sel[0], "values")
+        if vals and len(vals) >= 3:
+            self._set_clipboard(vals[2], f"Đã chép AnyDesk ID: {vals[2]}")
+
+    def copy_selected_mac(self):
+        sel = self.tree_devs.selection()
+        if not sel: return
+        vals = self.tree_devs.item(sel[0], "values")
+        if vals and len(vals) >= 2:
+            self._set_clipboard(vals[1], f"Đã chép MAC: {vals[1]}")
 
     def on_device_click(self, event):
         region = self.tree_devs.identify("region", event.x, event.y)
