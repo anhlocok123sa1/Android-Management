@@ -1250,6 +1250,21 @@ function handleBatchImportDevices(params) {
 function syncProjectSheets() {
   var ss = getSpreadsheet();
   var masterSheet = getSheet("Devices");
+  ensureHeaders(masterSheet, [
+    "mac", "anydesk_id", "project", "software", "mac_ics", 
+    "status", "last_seen", "app_version", "storage_mb", "task_id", 
+    "iot_id", "imei_sim", "notes"
+  ]);
+
+  // Xóa các tab cũ thời điểm đầu không còn phù hợp (do nhầm lẫn phần mềm với tên dự án)
+  var legacySheets = ["Android Mới", "Radio 3.6", "Radio 1.66", "ICS"];
+  for (var l = 0; l < legacySheets.length; l++) {
+    var oldS = ss.getSheetByName(legacySheets[l]);
+    if (oldS) {
+      try { ss.deleteSheet(oldS); } catch (e) {}
+    }
+  }
+
   var rawRows = getSheetRowsAsObjects(masterSheet);
 
   var byProject = {};
