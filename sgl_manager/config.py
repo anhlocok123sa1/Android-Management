@@ -90,3 +90,27 @@ def open_anydesk_session(ad_id: str, password: str = DEFAULT_ANYDESK_PASS, clipb
         return True, f"Đang kết nối AnyDesk ID: {clean_id} (Đã tự động nạp mật khẩu: {password})"
     except Exception as e:
         return False, f"Lỗi khởi chạy AnyDesk: {e}"
+
+def open_anydesk_file_transfer(ad_id: str):
+    """Mở cửa sổ truyền file chuyên dụng của AnyDesk."""
+    if not ad_id or "Chưa" in str(ad_id):
+        return False, "Thiết bị này chưa có AnyDesk ID!"
+    clean_id = re.sub(r"\D", "", str(ad_id))
+    if not clean_id:
+        return False, "Mã AnyDesk ID không hợp lệ!"
+    exe = get_anydesk_exe()
+    if not exe:
+        return False, "Không tìm thấy file AnyDesk.exe trên máy tính."
+    try:
+        subprocess.Popen(f'"{exe}" {clean_id} --file-transfer', shell=True)
+        return True, f"Đã mở cửa sổ truyền file AnyDesk tới ID: {clean_id}"
+    except Exception as e:
+        return False, f"Lỗi mở truyền file AnyDesk: {e}"
+
+def open_explorer_select_file(file_path: str):
+    """Mở thư mục trên máy tính và trỏ sẵn con trỏ vào file APK."""
+    abs_path = os.path.abspath(file_path)
+    if os.path.isfile(abs_path):
+        subprocess.Popen(f'explorer.exe /select,"{abs_path}"', shell=True)
+        return True
+    return False

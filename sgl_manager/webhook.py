@@ -140,3 +140,20 @@ class WebhookClient:
         }
         res = self._post(payload)
         return res if isinstance(res, dict) else {"status": "error"}
+
+    def batch_import_devices(self, devices: list) -> dict:
+        """Nạp danh sách hàng loạt thiết bị (từ file Google Sheet mẫu) và tự động phân tách sheet."""
+        payload = {
+            "action": "batch_import_devices",
+            "devices": json.dumps(devices, ensure_ascii=False)
+        }
+        res = self._post(payload)
+        return res if isinstance(res, dict) else {"status": "error"}
+
+    def sync_project_sheets(self) -> dict:
+        """Yêu cầu Google Apps Script đồng bộ phân tách lại các sheet dự án và sheet final."""
+        payload = {
+            "action": "sync_project_sheets"
+        }
+        res = self._post(payload)
+        return res if isinstance(res, dict) else {"status": "error"}

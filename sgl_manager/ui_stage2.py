@@ -9,6 +9,7 @@ from .config import (
     FG_MATRIX, FG_CYAN, FG_AMBER, FG_RED, FG_DIM, FG_TEXT, BORDER_NEON,
     DEFAULT_ANYDESK_PASS, open_anydesk_session
 )
+from .ui_onboarder import OnboarderDialog
 
 class Stage2Frame(tk.Frame):
     def __init__(self, parent, webhook_client=None):
@@ -72,6 +73,14 @@ class Stage2Frame(tk.Frame):
         )
         btn_assign_proj.pack(side=tk.LEFT, padx=4)
 
+        btn_onboard = tk.Button(
+            top_left_bar, text="[ 🔌 ONBOARD ]", font=("Consolas", 8, "bold"),
+            bg="#2E1800", fg=FG_AMBER, activebackground="#5E3200", activeforeground="#FFFFFF",
+            relief="flat", bd=0, highlightthickness=1, highlightbackground=FG_AMBER,
+            padx=6, pady=2, command=self.open_onboarder_dialog
+        )
+        btn_onboard.pack(side=tk.LEFT, padx=4)
+
         btn_select_all = tk.Button(
             top_left_bar, text="[ ☑ CHỌN HẾT ]", font=("Consolas", 8, "bold"),
             bg=BG_PANEL, fg=FG_TEXT, activebackground="#14291A", activeforeground="#FFFFFF",
@@ -121,6 +130,7 @@ class Stage2Frame(tk.Frame):
         self.menu.add_command(label="📋 Sao chép Mã ICS", command=self.copy_selected_ics)
         self.menu.add_separator()
         self.menu.add_command(label="📁 Gán / Đổi Dự Án...", command=self.assign_project_selected)
+        self.menu.add_command(label="🔌 Onboard Box này qua AnyDesk (1-Click)", command=self.open_onboarder_dialog)
 
         scrollbar_l = ttk.Scrollbar(left_frame, orient=tk.VERTICAL, command=self.tree_devs.yview)
         self.tree_devs.configure(yscroll=scrollbar_l.set)
@@ -390,6 +400,36 @@ class Stage2Frame(tk.Frame):
             self.after(0, _done)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def open_onboarder_dialog(self):
+        sel = self.tree_devs.selection()
+        target_dev = None
+        if sel:
+            vals = self.tree_devs.item(sel[0], "values")
+            if vals and len(vals) > 1:
+                sel_mac = vals[1]
+                for d in self.devices:
+                    if d.get("mac") == sel_mac:
+                        target_dev = d
+                        break
+
+        # Tìm các thiết bị chưa Online hoặc được chọn
+        offline_devs = []
+        for d in self.devices:
+            st = str(d.get("status", "")).lower()
+            if "online" not in st:
+                offline_devs.append(d)
+
+        if not offline_devs and not target_dev:
+            offline_devs = self.devices
+
+        OnboarderDialog(
+            self,
+            target_device=target_dev or (offline_devs[0] if offline_devs else None),
+            device_list=offline_devs,
+            webhook_client=self.webhook,
+            on_success_cb=lambda _: self.load_devices()
+        )
 
     def on_device_click(self, event):
         region = self.tree_devs.identify("region", event.x, event.y)

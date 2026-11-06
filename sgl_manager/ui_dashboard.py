@@ -11,6 +11,7 @@ from .config import (
     FG_MATRIX, FG_CYAN, FG_AMBER, FG_RED, FG_DIM, FG_TEXT, BORDER_NEON,
     DEFAULT_ANYDESK_PASS, open_anydesk_session
 )
+from .ui_onboarder import OnboarderDialog
 
 class DashboardFrame(tk.Frame):
     def __init__(self, parent, webhook_client=None):
@@ -98,6 +99,14 @@ class DashboardFrame(tk.Frame):
         )
         self.btn_open_ad.pack(side=tk.LEFT, padx=4)
 
+        self.btn_onboard = tk.Button(
+            filter_frame, text="[ 🔌 ONBOARD BOX CŨ ]", font=("Consolas", 9, "bold"),
+            bg="#2E1800", fg=FG_AMBER, activebackground="#5E3200", activeforeground="#FFFFFF",
+            relief="flat", bd=0, highlightthickness=1, highlightbackground=FG_AMBER,
+            padx=10, pady=4, cursor="hand2", command=self.open_onboarder_dialog
+        )
+        self.btn_onboard.pack(side=tk.LEFT, padx=4)
+
         # 3. BẢNG DANH SÁCH THIẾT BỊ
         table_frame = tk.Frame(self, bg=BG_PANEL, padx=2, pady=2, highlightthickness=1, highlightbackground=BORDER_NEON)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(3, 8))
@@ -149,6 +158,7 @@ class DashboardFrame(tk.Frame):
         self.menu.add_command(label="📋 Sao chép Mã ICS", command=self.copy_selected_ics)
         self.menu.add_separator()
         self.menu.add_command(label="📁 Gán / Đổi Dự Án...", command=self.assign_project_dialog)
+        self.menu.add_command(label="🔌 Onboard Box này qua AnyDesk (1-Click)", command=self.open_onboarder_dialog)
         self.menu.add_separator()
         self.menu.add_command(label="🔄 Làm mới dữ liệu", command=self.refresh)
 
@@ -404,3 +414,33 @@ class DashboardFrame(tk.Frame):
         )
         if not ok:
             messagebox.showwarning("AnyDesk", msg)
+
+    def open_onboarder_dialog(self):
+        sel = self.tree.selection()
+        target_dev = None
+        if sel:
+            vals = self.tree.item(sel[0], "values")
+            if vals and len(vals) > 1:
+                sel_mac = vals[1]
+                for d in self.devices_data:
+                    if d.get("mac") == sel_mac:
+                        target_dev = d
+                        break
+
+        # Gom danh sách các box chưa Online để duyệt nhanh
+        offline_devs = []
+        for d in self.devices_data:
+            label, tag = self.evaluate_status(d)
+            if tag != "online":
+                offline_devs.append(d)
+
+        if not offline_devs and not target_dev:
+            offline_devs = self.devices_data
+
+        OnboarderDialog(
+            self,
+            target_device=target_dev or (offline_devs[0] if offline_devs else None),
+            device_list=offline_devs,
+            webhook_client=self.webhook,
+            on_success_cb=lambda _: self.refresh()
+        )
