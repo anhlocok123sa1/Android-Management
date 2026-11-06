@@ -144,16 +144,41 @@ class DashboardFrame(tk.Frame):
             self.menu.post(event.x_root, event.y_root)
 
     def parse_time_diff_minutes(self, time_str):
-        if not time_str or time_str == "Chưa có":
+        if not time_str or time_str in ("Chưa có", "None", ""):
             return 999999
-        # Thử parse ISO format hoặc %Y-%m-%d %H:%M:%S
-        formats = ["%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S"]
-        now = datetime.now()
+        s = str(time_str).strip()
+        # 1. Thử ISO-8601 (chứa T và có Z hoặc offset UTC từ Google Apps Script)
+        try:
+            if "T" in s:
+                clean_s = s.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(clean_s)
+                if dt.tzinfo is not None:
+                    diff_sec = (datetime.now(timezone.utc) - dt).total_seconds()
+                else:
+                    diff_sec = (datetime.now() - dt).total_seconds()
+                return max(0.0, diff_sec / 60.0)
+        except Exception:
+            pass
+
+        # 2. Thử các format thông dụng đối chiếu cả giờ Local lẫn UTC chống lệch múi giờ
+        formats = [
+            "%Y-%m-%d %H:%M:%S",
+            "%d/%m/%Y %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+            "%m/%d/%Y %H:%M:%S",
+            "%Y/%m/%d %H:%M:%S"
+        ]
+        now_local = datetime.now()
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         for fmt in formats:
             try:
-                dt = datetime.strptime(time_str.split(".")[0], fmt.split(".")[0])
-                diff_sec = (now - dt).total_seconds()
-                return max(0, diff_sec / 60.0)
+                base_s = s.split(".")[0]
+                dt = datetime.strptime(base_s, fmt)
+                diff_l = (now_local - dt).total_seconds()
+                diff_u = (now_utc - dt).total_seconds()
+                valid = [d for d in (diff_l, diff_u) if d >= -120]
+                if valid:
+                    return max(0.0, min(valid) / 60.0)
             except Exception:
                 continue
         return 999999
@@ -165,9 +190,9 @@ class DashboardFrame(tk.Frame):
 
         last_seen = device.get("last_seen", "")
         mins = self.parse_time_diff_minutes(last_seen)
-        if mins <= 10:
+        if mins <= 15:
             return "🟢 Online", "online"
-        elif mins <= 30:
+        elif mins <= 45:
             return "🟡 Chậm", "slow"
         else:
             return "🔴 Offline", "offline"
@@ -228,7 +253,19 @@ class DashboardFrame(tk.Frame):
             if filter_stat != "TẤT CẢ" and filter_stat != label:
                 continue
 
-            vals = (f"{stt:02d}", mac, ad_id, proj, label, last_seen, app_ver, storage, task)
+            mins = self.parse_time_diff_minutes(last_seen)
+            if mins < 1:
+                disp_last = "🟢 Vừa xong"
+            elif mins < 60:
+                disp_last = f"{int(mins)} phút trước"
+            elif mins < 1440:
+                disp_last = f"{int(mins / 60)} giờ trước"
+            elif last_seen and last_seen != "Chưa có":
+                disp_last = str(last_seen).replace("T", " ").split(".")[0]
+            else:
+                disp_last = "Chưa nhận ping"
+
+            vals = (f"{stt:02d}", mac, ad_id, proj, label, disp_last, app_ver, storage, task)
             self.tree.insert("", tk.END, iid=mac if mac else f"row_{stt}", values=vals, tags=(tag,))
             stt += 1
 

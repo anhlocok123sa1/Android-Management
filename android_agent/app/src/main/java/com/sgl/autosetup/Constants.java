@@ -1,8 +1,8 @@
 package com.sgl.autosetup;
 
 public class Constants {
-    // Điền URL Google Apps Script Web App vào đây sau khi deploy
-    public static final String WEBHOOK_URL = "PLACEHOLDER_WEBHOOK_URL";
+    // Google Apps Script Web App URL
+    public static final String WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxqawYpW8SebK0EK21Cl7C2uw6vN3-Jr7vQIHSAbNxtwXA5H7c_lYRNhXuB7104P0NN/exec";
     public static final long POLL_INTERVAL_MS = 5 * 60 * 1000L; // 5 phút
     public static final int MAX_RETRY = 3;
     public static final String TAG = "SGL_AGENT";

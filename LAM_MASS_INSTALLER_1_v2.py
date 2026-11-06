@@ -1513,7 +1513,11 @@ class LanMassInstallerApp:
             if anydesk_id:
                 break
 
-        if os.path.isdir("anydesk_config"):
+        ad_cfg_dir = os.path.join(BASE_DIR, "anydesk_config")
+        if not os.path.isdir(ad_cfg_dir) and os.path.isdir("anydesk_config"):
+            ad_cfg_dir = os.path.abspath("anydesk_config")
+
+        if os.path.isdir(ad_cfg_dir):
             ad_tmp_dir = f"/data/local/tmp/ad_tpl_{ip.split('.')[-1]}"
             self.run_adb_root(
                 ip,
@@ -1523,7 +1527,7 @@ class LanMassInstallerApp:
             time.sleep(0.8)
             self.run_adb(
                 ip,
-                ["push", "anydesk_config", ad_tmp_dir],
+                ["push", ad_cfg_dir, ad_tmp_dir],
                 timeout=30,
                 step_name="PUSH_ANYDESK_TPL",
             )
@@ -1568,6 +1572,13 @@ class LanMassInstallerApp:
                 step_name="LAUNCH_ANYDESK_2",
             )
             time.sleep(2.5)
+
+        # Kích hoạt Agent AutoSetup chạy nền & kết nối Cloud Webhook
+        self.run_adb_root(
+            ip,
+            "am start-foreground-service com.sgl.autosetup/.AgentService ; monkey -p com.sgl.autosetup -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1",
+            step_name="START_AGENT_SERVICE",
+        )
 
         if not anydesk_id:
             anydesk_id = self.read_anydesk_id(ip)

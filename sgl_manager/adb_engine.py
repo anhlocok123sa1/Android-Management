@@ -388,11 +388,85 @@ class AdbEngine:
         )
         self.run_adb_root(ip, perm_cmd, step_name="GRANT_PERMS")
 
-        # 4. Khởi tạo AnyDesk
-        upd("⏳ [4/7] Khởi tạo mã AnyDesk & nạp cấu hình...")
-        self.run_adb_root(ip, "monkey -p com.anydesk.anydeskandroid -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1", step_name="LAUNCH_ANYDESK")
-        time.sleep(3)
-        anydesk_id = self.read_anydesk_id(ip)
+        # 4. Khởi tạo AnyDesk & nạp cấu hình mật khẩu 12345678j
+        upd("⏳ [4/7] Khởi tạo mã AnyDesk & nạp mật khẩu 12345678j...")
+        self.run_adb_root(ip, "monkey -p com.anydesk.anydeskandroid -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1", step_name="LAUNCH_ANYDESK_1")
+        anydesk_id = ""
+        for _ in range(10):
+            time.sleep(1)
+            anydesk_id = self.read_anydesk_id(ip)
+            if anydesk_id:
+                break
+
+        ad_cfg_dir = os.path.join(BASE_DIR, "anydesk_config")
+        if not os.path.isdir(ad_cfg_dir) and os.path.isdir("anydesk_config"):
+            ad_cfg_dir = os.path.abspath("anydesk_config")
+
+        if os.path.isdir(ad_cfg_dir):
+            ad_tmp_dir = f"/data/local/tmp/ad_tpl_{ip.split('.')[-1]}"
+            self.run_adb_root(
+                ip,
+                "am force-stop com.anydesk.anydeskandroid",
+                step_name="STOP_ANYDESK",
+            )
+            time.sleep(0.8)
+            self.run_adb(
+                ip,
+                ["push", ad_cfg_dir, ad_tmp_dir],
+                timeout=30,
+                step_name="PUSH_ANYDESK_TPL",
+            )
+            restore_cmd = (
+                "for base in /data_mirror/data_de/null/0/com.anydesk.anydeskandroid "
+                "/data_mirror/data_ce/null/0/com.anydesk.anydeskandroid "
+                "/data/user_de/0/com.anydesk.anydeskandroid "
+                "/data/user/0/com.anydesk.anydeskandroid "
+                "/data/data/com.anydesk.anydeskandroid; do "
+                '  target="$base/files/.anydesk"; '
+                '  if [ -d "$target" ]; then '
+                "    for f in service.conf system.conf user.conf; do "
+                f'      if [ -s "{ad_tmp_dir}/$f" ]; then '
+                '        rm -f "$target/$f.new"; '
+                '        if [ -f "$target/$f" ]; then '
+                "          grep -E '^ad\\.anynet\\.(id|cert|pkey|alias|register)' \"$target/$f\" > \"$target/$f.new\" 2>/dev/null || true; "
+                "        fi; "
+                f'        cat "{ad_tmp_dir}/$f" >> "$target/$f.new"; '
+                '        mv "$target/$f.new" "$target/$f"; '
+                "      fi; "
+                "    done; "
+                '    OWNER=$(stat -c "%u:%g" "$base" 2>/dev/null); '
+                '    if [ -n "$OWNER" ]; then chown -R $OWNER "$base/files" 2>/dev/null; fi; '
+                '    chmod 600 "$target"/*.conf 2>/dev/null; '
+                "  fi; "
+                f'  if [ -d "$base" ] && [ -d "{ad_tmp_dir}/shared_prefs" ]; then '
+                '    mkdir -p "$base/shared_prefs" 2>/dev/null; '
+                f'    cp -f {ad_tmp_dir}/shared_prefs/*.xml "$base/shared_prefs/" 2>/dev/null || true; '
+                '    OWNER=$(stat -c "%u:%g" "$base" 2>/dev/null); '
+                '    if [ -n "$OWNER" ]; then chown -R $OWNER "$base/shared_prefs" 2>/dev/null; fi; '
+                '    chmod 660 "$base/shared_prefs/"*.xml 2>/dev/null; '
+                "  fi; "
+                "done; "
+                f"rm -rf {ad_tmp_dir} ; sync"
+            )
+            self.run_adb_root(
+                ip, restore_cmd, step_name="RESTORE_ANYDESK_CONFIG"
+            )
+            self.run_adb_root(
+                ip,
+                "monkey -p com.anydesk.anydeskandroid -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1",
+                step_name="LAUNCH_ANYDESK_2",
+            )
+            time.sleep(2.5)
+
+        if not anydesk_id:
+            anydesk_id = self.read_anydesk_id(ip)
+
+        # Kích hoạt Agent AutoSetup chạy nền & kết nối Cloud Webhook
+        self.run_adb_root(
+            ip,
+            "am start-foreground-service com.sgl.autosetup/.AgentService ; monkey -p com.sgl.autosetup -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1",
+            step_name="START_AGENT_SERVICE",
+        )
 
         # 5. Đăng ký lên Sheet / Webhook
         upd("⏳ [5/7] Đang ghi AnyDesk & MAC lên Sheet...")
