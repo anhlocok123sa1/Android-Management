@@ -2,7 +2,7 @@
 <map>
     <boolean name="tutorial_main_finished" value="true" />
     <boolean name="tutorial_main_requested" value="false" />
-    <string name="incoming_cids">1102591771,</string>
+    <string name="incoming_cids">1102591771,1869465488,</string>
     <boolean name="imported_from_default_storage" value="true" />
     <int name="tutorial_main_news_version" value="80000" />
     <boolean name="privacy_statement_shown" value="true" />

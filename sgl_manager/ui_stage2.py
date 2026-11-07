@@ -187,14 +187,14 @@ class Stage2Frame(tk.Frame):
             tpls = []
             if self.webhook:
                 tpls = self.webhook.get_templates()
-            # Mẫu mặc định nếu Sheet chưa có
+            # Mẫu mặc định nếu Sheet chưa có -> đồng bộ luôn lên Google Sheet
             if not tpls:
                 tpls = [
                     {
                         "template_name": "deploy_radio_36",
                         "description": "Chốt dự án Radio 3.6 (Đăng xuất tài khoản test, giữ app 3.6)",
                         "steps_json": json.dumps([
-                            {"action": "exec_cmd", "params": {"command": "am force-stop com.radiostation"}},
+                            {"action": "shell_cmd", "params": {"cmd": "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation"}},
                             {"action": "report_field", "params": {"field": "software", "value": "Radio 3.6"}}
                         ], indent=2)
                     },
@@ -202,10 +202,10 @@ class Stage2Frame(tk.Frame):
                         "template_name": "deploy_vnpt_ics",
                         "description": "Chuyển sang VNPT ICS (Gỡ 3.6, cài ICS, tự động lấy MAC ICS lên Sheet)",
                         "steps_json": json.dumps([
-                            {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
+                            {"action": "uninstall_pkg", "params": {"package": "vn.phitn.app.radiostation"}},
                             {"action": "install_apk", "params": {"file": "ics-android-box (2.0.0).apk"}},
-                            {"action": "start_app", "params": {"package": "vnpt.smartcomm.radio", "activity": "vnpt.smartcomm.radio.activity.SplashActivity"}},
-                            {"action": "extract_ics_mac", "params": {}},
+                            {"action": "start_app", "params": {"package": "com.app.ics_content_management", "fallback_package": "vnpt.smartcomm.radio", "activity": "vnpt.smartcomm.radio.activity.SplashActivity"}},
+                            {"action": "extract_ics_mac", "params": {"package": "com.app.ics_content_management", "fallback_package": "vnpt.smartcomm.radio"}},
                             {"action": "report_field", "params": {"field": "software", "value": "VNPT ICS"}}
                         ], indent=2)
                     },
@@ -213,7 +213,7 @@ class Stage2Frame(tk.Frame):
                         "template_name": "deploy_radio_166",
                         "description": "Chuyển sang Radio 1.66 (Gỡ 3.6, cài Radio 1.66)",
                         "steps_json": json.dumps([
-                            {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
+                            {"action": "uninstall_pkg", "params": {"package": "vn.phitn.app.radiostation"}},
                             {"action": "install_apk", "params": {"file": "radio.apk"}},
                             {"action": "report_field", "params": {"field": "software", "value": "Radio 1.66"}}
                         ], indent=2)
@@ -222,7 +222,7 @@ class Stage2Frame(tk.Frame):
                         "template_name": "deploy_radio_20",
                         "description": "Nâng cấp Radio 2.0 (Đọc thông tin 14 input từ Google Sheet)",
                         "steps_json": json.dumps([
-                            {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
+                            {"action": "uninstall_pkg", "params": {"package": "vn.phitn.app.radiostation"}},
                             {"action": "install_apk", "params": {"file": "Radio2.0.apk"}},
                             {"action": "fetch_config", "params": {"sheet": "Config_Radio20", "key": "mac"}},
                             {"action": "report_field", "params": {"field": "software", "value": "Radio 2.0"}}
@@ -237,6 +237,12 @@ class Stage2Frame(tk.Frame):
                         ], indent=2)
                     }
                 ]
+                if self.webhook:
+                    for dt in tpls:
+                        try:
+                            self.webhook.save_template(dt["template_name"], dt["steps_json"], dt.get("description", ""))
+                        except Exception:
+                            pass
             self.templates = tpls
             names = [t.get("template_name", "") for t in tpls]
             self.after(0, lambda: self._update_cbo_templates(names))
@@ -488,7 +494,13 @@ class Stage2Frame(tk.Frame):
             mac_list = list(self.selected_macs)
             task_ids = []
             if self.webhook:
-                task_ids = self.webhook.create_task(tpl_name, mac_list)
+                tpl_obj = next((t for t in self.templates if t.get("template_name") == tpl_name), {})
+                task_ids = self.webhook.create_task(
+                    tpl_name,
+                    mac_list,
+                    steps_json=tpl_obj.get("steps_json", "[]"),
+                    description=tpl_obj.get("description", "")
+                )
 
             def _done():
                 self.btn_deploy.config(text="[ 🚀 BẮT ĐẦU TRIỂN KHAI CHO CÁC MẠCH ĐÃ CHỌN ]", state=tk.NORMAL)

@@ -30,6 +30,10 @@ public class AgentService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_CURRENT_TASK, "idle")
+                .apply();
         webhookClient = new WebhookClient(Constants.WEBHOOK_URL);
         taskExecutor = new TaskExecutor();
         createNotificationChannel();
@@ -110,16 +114,14 @@ public class AgentService extends Service {
                     Log.i(Constants.TAG, "Claimed task " + taskId + " successfully. Starting execution...");
                     prefs.edit().putString(KEY_CURRENT_TASK, taskId).apply();
                     updateNotification("Đang chạy nhiệm vụ: " + templateName);
-
-                    // Execute task in background
-                    TaskExecutor.ExecutionResult execRes = taskExecutor.execute(this, taskId, templateName, stepsJson, mac, webhookClient);
-
-                    // Complete task
-                    Log.i(Constants.TAG, "Task execution finished. Success: " + execRes.success);
-                    webhookClient.completeTask(mac, taskId, execRes.result != null ? execRes.result : execRes.error, execRes.success);
-
-                    prefs.edit().putString(KEY_CURRENT_TASK, "idle").apply();
-                    updateNotification("SGL Agent đang chạy nền...");
+                    try {
+                        TaskExecutor.ExecutionResult execRes = taskExecutor.execute(this, taskId, templateName, stepsJson, mac, webhookClient);
+                        Log.i(Constants.TAG, "Task execution finished. Success: " + execRes.success);
+                        webhookClient.completeTask(mac, taskId, execRes.result != null ? execRes.result : execRes.error, execRes.success);
+                    } finally {
+                        prefs.edit().putString(KEY_CURRENT_TASK, "idle").apply();
+                        updateNotification("SGL Agent đang chạy nền...");
+                    }
                 } else {
                     Log.w(Constants.TAG, "Could not claim task " + taskId + " (already claimed or cancelled)");
                 }
@@ -162,7 +164,7 @@ public class AgentService extends Service {
                     "SGL AutoSetup Agent Service",
                     NotificationManager.IMPORTANCE_LOW
             );
-            channel.setDescription("Dịch vụ ngầm đồng bộ và nhận lệnh từ xa");
+            channel.setDescription("Dịch vụ đồng bộ nhiệm vụ từ xa");
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) {
                 manager.createNotificationChannel(channel);

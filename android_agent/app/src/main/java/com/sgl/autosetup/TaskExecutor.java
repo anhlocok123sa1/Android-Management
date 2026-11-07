@@ -6,6 +6,7 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -69,8 +70,21 @@ public class TaskExecutor {
                             stepOk = true; // best-effort
                             break;
                         case "shell_cmd":
+                        case "exec_cmd":
                             stepOutput = executeShellCmd(params);
                             stepOk = true; // best-effort
+                            break;
+                        case "start_app":
+                            stepOutput = executeStartApp(params);
+                            stepOk = !stepOutput.startsWith("ERROR");
+                            break;
+                        case "extract_ics_mac":
+                            stepOutput = executeExtractIcsMac(params);
+                            stepOk = !stepOutput.startsWith("ERROR");
+                            break;
+                        case "fetch_config":
+                            stepOutput = "Fetched config for " + params.optString("sheet", "Config_Radio20") + " (best-effort)";
+                            stepOk = true;
                             break;
                         default:
                             stepOutput = "Unknown action: " + action;
@@ -174,8 +188,17 @@ public class TaskExecutor {
     // -------------------------------------------------------------------------
     private String executeInstallApk(JSONObject params) throws Exception {
         String file = params.getString("file");
-        String apkPath = Constants.LOCAL_TASK_DIR + file;
-        String cmd = "pm install -r -g " + apkPath;
+        File srcFile = new File(Constants.LOCAL_TASK_DIR, file);
+        if (!srcFile.exists()) {
+            srcFile = new File("/sdcard/SGL_Backup_Apks", file);
+        }
+        if (!srcFile.exists()) {
+            return "ERROR: APK file not found in SGL_Tasks or SGL_Backup_Apks: " + file;
+        }
+        String cmd = "cp \"" + srcFile.getAbsolutePath() + "\" /data/local/tmp/sgl_task_install.apk && "
+                + "chmod 644 /data/local/tmp/sgl_task_install.apk && "
+                + "pm install -r -g /data/local/tmp/sgl_task_install.apk 2>&1 ; "
+                + "rm -f /data/local/tmp/sgl_task_install.apk";
         return runRootCommand(cmd);
     }
 
@@ -184,7 +207,12 @@ public class TaskExecutor {
     // -------------------------------------------------------------------------
     private String executeUninstallPkg(JSONObject params) throws Exception {
         String pkg = params.getString("package");
-        String cmd = "am force-stop " + pkg + " ; pm uninstall " + pkg;
+        String cmd;
+        if ("com.radiostation".equals(pkg) || "vn.phitn.app.radiostation".equals(pkg)) {
+            cmd = "am force-stop vn.phitn.app.radiostation ; pm uninstall vn.phitn.app.radiostation ; am force-stop com.radiostation ; pm uninstall com.radiostation";
+        } else {
+            cmd = "am force-stop " + pkg + " ; pm uninstall " + pkg;
+        }
         return runRootCommand(cmd);
     }
 
@@ -193,24 +221,76 @@ public class TaskExecutor {
     // -------------------------------------------------------------------------
     private String executeReportField(JSONObject params, String mac, String taskId,
                                       WebhookClient webhookClient) {
-        try {
-            String field = params.getString("field");
-            String value = params.getString("value");
-            // Report as a complete_task with structured result containing field info
-            webhookClient.completeTask(mac, taskId + "_field_" + field,
-                    field + "=" + value, true);
-            return "Reported field " + field + "=" + value;
-        } catch (Exception e) {
-            return "report_field error: " + e.getMessage();
-        }
+        String field = params.optString("field", "").trim();
+        String value = params.optString("value", "").trim();
+        return field + "=" + value;
     }
 
     // -------------------------------------------------------------------------
-    // Action: shell_cmd
+    // Action: shell_cmd / exec_cmd
     // -------------------------------------------------------------------------
     private String executeShellCmd(JSONObject params) throws Exception {
-        String cmd = params.getString("cmd");
+        String cmd = params.optString("cmd", params.optString("command", ""));
+        if (cmd.isEmpty()) return "Empty command";
         return runRootCommand(cmd);
+    }
+
+    // -------------------------------------------------------------------------
+    // Action: start_app
+    // -------------------------------------------------------------------------
+    private String executeStartApp(JSONObject params) {
+        String pkg = params.optString("package", "").trim();
+        String fallbackPkg = params.optString("fallback_package", "").trim();
+        String activity = params.optString("activity", "").trim();
+        if (pkg.isEmpty()) return "ERROR: Missing package name";
+        String cmd;
+        if (!activity.isEmpty()) {
+            cmd = "am start -n " + pkg + "/" + activity + " >/dev/null 2>&1 || monkey -p " + pkg + " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || monkey -p com.app.ics_content_management -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1";
+        } else {
+            cmd = "monkey -p " + pkg + " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || monkey -p com.app.ics_content_management -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1";
+        }
+        if (!fallbackPkg.isEmpty()) {
+            cmd += " || monkey -p " + fallbackPkg + " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1";
+        }
+        runRootCommand(cmd);
+        return "Started app: " + pkg;
+    }
+
+    // -------------------------------------------------------------------------
+    // Action: extract_ics_mac
+    // -------------------------------------------------------------------------
+    private String executeExtractIcsMac(JSONObject params) {
+        String pkg = params.optString("package", "com.app.ics_content_management").trim();
+        String fallbackPkg = params.optString("fallback_package", "vnpt.smartcomm.radio").trim();
+        runRootCommand("monkey -p " + pkg + " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || monkey -p " + fallbackPkg + " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1");
+
+        String icsCode = "";
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                Thread.sleep(attempt == 1 ? 5000 : 2500);
+            } catch (InterruptedException ignored) {}
+
+            String dumpAndParseCmd =
+                    "rm -f /data/local/tmp/ics_ui.xml /data/local/tmp/ics_nodes.txt ; " +
+                    "uiautomator dump /data/local/tmp/ics_ui.xml >/dev/null 2>&1 ; " +
+                    "if [ -f /data/local/tmp/ics_ui.xml ]; then " +
+                    "  sed 's/></>\\n</g' /data/local/tmp/ics_ui.xml > /data/local/tmp/ics_nodes.txt ; " +
+                    "  CODE=$(grep 'class=\"android.view.View\"' /data/local/tmp/ics_nodes.txt | grep 'content-desc=\"\"' | grep -oE 'text=\"[^\"]+\"' | grep -v 'text=\"\"' | head -n 1 | cut -d'\"' -f2) ; " +
+                    "  if [ -z \"$CODE\" ]; then " +
+                    "    CODE=$(grep -oE 'text=\"[0-9a-fA-F]{12,24}\"' /data/local/tmp/ics_nodes.txt | head -n 1 | cut -d'\"' -f2) ; " +
+                    "  fi ; " +
+                    "  echo \"$CODE\" ; " +
+                    "fi";
+            icsCode = runRootCommand(dumpAndParseCmd).trim();
+            if (!icsCode.isEmpty() && !icsCode.startsWith("ERROR")) {
+                break;
+            }
+        }
+
+        if (icsCode.isEmpty() || icsCode.startsWith("ERROR")) {
+            return "ERROR: Could not extract ICS MAC from UI";
+        }
+        return "mac_ics=" + icsCode;
     }
 
     // -------------------------------------------------------------------------
@@ -219,7 +299,18 @@ public class TaskExecutor {
     private String runRootCommand(String cmd) {
         StringBuilder output = new StringBuilder();
         try {
-            Process process = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
+            Process process = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(process.getOutputStream());
+            os.writeBytes("if command -v nsenter >/dev/null 2>&1; then\n");
+            os.writeBytes("  nsenter -t 1 -m -- /system/bin/sh << 'EOF_SGL_CMD'\n");
+            os.writeBytes(cmd + "\n");
+            os.writeBytes("EOF_SGL_CMD\n");
+            os.writeBytes("else\n");
+            os.writeBytes(cmd + "\n");
+            os.writeBytes("fi\n");
+            os.writeBytes("exit\n");
+            os.flush();
+
             BufferedReader stdout = new BufferedReader(new InputStreamReader(process.getInputStream()));
             BufferedReader stderr = new BufferedReader(new InputStreamReader(process.getErrorStream()));
             String line;

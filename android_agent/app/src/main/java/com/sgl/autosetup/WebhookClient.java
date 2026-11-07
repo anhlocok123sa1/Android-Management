@@ -165,7 +165,7 @@ public class WebhookClient {
         try {
             JSONObject payload = new JSONObject();
             payload.put("action", "save_template");
-            payload.put("name", name);
+            payload.put("template_name", name);
             payload.put("steps_json", stepsJson);
             payload.put("description", description);
 

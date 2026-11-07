@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import socket
@@ -348,6 +349,47 @@ class AdbEngine:
             return True, (ad_id if ad_id else "Đã cài APK")
         return False, ""
 
+    def _ensure_local_pc_in_anydesk_config(self, ad_cfg_dir):
+        """Tự động đọc AnyDesk ID của máy tính hiện tại và thêm vào incoming_cids để kết nối 0s không cần chờ đếm ngược."""
+        pc_cids = {"1102591771", "1869465488"}
+        conf_candidates = [
+            os.path.expandvars(r"%ProgramData%\AnyDesk\system.conf"),
+            os.path.expandvars(r"%AppData%\AnyDesk\system.conf"),
+            os.path.expandvars(r"%ProgramData%\AnyDesk\service.conf"),
+            os.path.expandvars(r"%AppData%\AnyDesk\service.conf"),
+        ]
+        for cpath in conf_candidates:
+            if os.path.isfile(cpath):
+                try:
+                    with open(cpath, "r", encoding="utf-8", errors="ignore") as f:
+                        m = re.search(r"ad\.anynet\.id=(\d{7,12})", f.read())
+                        if m:
+                            pc_cids.add(m.group(1))
+                except Exception:
+                    pass
+
+        pref_file = os.path.join(ad_cfg_dir, "shared_prefs", "com.anydesk.anydeskandroid_preferences.xml")
+        if os.path.isfile(pref_file):
+            try:
+                with open(pref_file, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                m_existing = re.search(r'<string name="incoming_cids">([^<]*)</string>', content)
+                if m_existing:
+                    for cid in m_existing.group(1).split(","):
+                        if cid.strip().isdigit():
+                            pc_cids.add(cid.strip())
+                merged_cids = ",".join(sorted(pc_cids)) + ","
+                new_content = re.sub(
+                    r'<string name="incoming_cids">[^<]*</string>',
+                    f'<string name="incoming_cids">{merged_cids}</string>',
+                    content,
+                )
+                if new_content != content:
+                    with open(pref_file, "w", encoding="utf-8") as f:
+                        f.write(new_content)
+            except Exception:
+                pass
+
     def install_stage1_flow(self, ip, radio_user, radio_pass, copy_backup, status_cb=None, project_name="Kho thiết bị"):
         def upd(msg, state="running"):
             if status_cb:
@@ -367,7 +409,7 @@ class AdbEngine:
                 return False, mac, ""
 
         # Tạm đóng Radio
-        self.run_adb_root(ip, "am force-stop com.radiostation", step_name="STOP_RADIO")
+        self.run_adb_root(ip, "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation", step_name="STOP_RADIO")
 
         # 2. Chép bộ cài dự phòng
         if copy_backup:
@@ -403,6 +445,7 @@ class AdbEngine:
             ad_cfg_dir = os.path.abspath("anydesk_config")
 
         if os.path.isdir(ad_cfg_dir):
+            self._ensure_local_pc_in_anydesk_config(ad_cfg_dir)
             ad_tmp_dir = f"/data/local/tmp/ad_tpl_{ip.split('.')[-1]}"
             self.run_adb_root(
                 ip,
@@ -483,10 +526,34 @@ class AdbEngine:
         )
         self.run_adb_root(ip, tz_cmd, step_name="SET_TZ")
 
-        # 7. Đăng nhập Radio 3.6
-        upd(f"⏳ [7/7] Mở Radio 3.6 & đăng nhập ({radio_user})...")
-        self.run_adb_root(ip, "monkey -p com.radiostation -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1", step_name="LAUNCH_RADIO")
-        time.sleep(4)
+        # 7. Đăng nhập Radio 3.6 tức thì (0 giây chờ) qua cấu hình shared_prefs + mở ứng dụng
+        upd(f"⏳ [7/7] Đăng nhập tức thì Radio 3.6 ({radio_user})...")
+        if radio_user and radio_pass:
+            md5_pass = hashlib.md5(str(radio_pass).encode("utf-8")).hexdigest()
+            login_cmd = (
+                "for pkg in vn.phitn.app.radiostation com.radiostation; do "
+                "  am force-stop $pkg 2>/dev/null ; "
+                "  for base in /data_mirror/data_ce/null/0/$pkg /data/user/0/$pkg /data/data/$pkg; do "
+                "    if [ -d \"$base\" ]; then "
+                "      mkdir -p \"$base/shared_prefs\" 2>/dev/null ; "
+                "      printf '<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\" ?>\\n<map>\\n    <string name=\"user_info\">{&quot;username&quot;:&quot;%s&quot;,&quot;password&quot;:&quot;%s&quot;}</string>\\n</map>\\n' "
+                f"'{radio_user}' '{md5_pass}' > \"$base/shared_prefs/${{pkg}}_preferences.xml\" ; "
+                "      OWNER=$(stat -c '%u:%g' \"$base\" 2>/dev/null) ; "
+                "      if [ -n \"$OWNER\" ]; then chown -R $OWNER \"$base/shared_prefs\" 2>/dev/null; fi ; "
+                "      chmod 660 \"$base/shared_prefs/\"*.xml 2>/dev/null ; "
+                "    fi ; "
+                "  done ; "
+                "done ; "
+                "monkey -p vn.phitn.app.radiostation -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || "
+                "monkey -p com.radiostation -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1"
+            )
+            self.run_adb_root(ip, login_cmd, timeout=15, step_name="AUTO_LOGIN_RADIO")
+        else:
+            self.run_adb_root(
+                ip,
+                "monkey -p vn.phitn.app.radiostation -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || monkey -p com.radiostation -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1",
+                step_name="LAUNCH_RADIO",
+            )
 
         upd(f"🎉 [PWNED_OK] HOÀN TẤT GĐ1! (AnyDesk: {anydesk_id} | MAC: {mac} | Dự án: {project_name})", "done")
         self.log(f"✔ [{ip}] Cài đặt GĐ1 thành công -> AnyDesk: {anydesk_id} | MAC: {mac} | Dự án: {project_name}")

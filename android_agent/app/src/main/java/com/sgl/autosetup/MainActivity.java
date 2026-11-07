@@ -403,14 +403,9 @@ public class MainActivity extends Activity {
         setStatusBanner(anydeskId, formattedMac, "");
         sendToProjectSheet(SHEET_ANDROID_MOI, anydeskId, formattedMac, "", usbDir);
 
-        log("\n[Bước 7/8] Mở Radio 3.6 và đăng nhập tài khoản test âm thanh (" + radioUser + " / " + radioPass + ")...");
-        try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
+        log("\n[Bước 7/8] Đăng nhập tức thì Radio 3.6 (" + radioUser + " / " + radioPass + ")...");
         autoLoginRadioStation(radio36Pkg, radioUser, radioPass);
 
-        log("\n[Bước 8/8] Đợi 5 giây kiểm tra âm thanh phát ra...");
-        waitForAudioAndExit();
-
-        bringAutoSetupToFront();
         log("🎉 HOÀN TẤT GIAI ĐOẠN 1! Mạch đã sẵn sàng chuyển sang xưởng lắp ráp.");
         setButtonsEnabled(true);
     }
@@ -614,11 +609,15 @@ public class MainActivity extends Activity {
 
         try {
             JSONObject payload = new JSONObject();
-            payload.put("sheet_name", sheetName);
-            payload.put("sheet_type", SHEET_ICS.equals(sheetName) ? "ICS" : "MAIN");
+            payload.put("action", "register_device");
             payload.put("anydesk_id", anydeskId);
             payload.put("mac", mac);
-            if (SHEET_ICS.equals(sheetName)) {
+            payload.put("project", "Kho thiết bị");
+            payload.put("software", SHEET_ANDROID_MOI.equals(sheetName) ? "Radio 3.6 (Test)" : sheetName);
+            payload.put("sheet_name", sheetName);
+            payload.put("sheet_type", SHEET_ICS.equals(sheetName) ? "ICS" : "MAIN");
+            if (icsCode != null && !icsCode.isEmpty()) {
+                payload.put("mac_ics", icsCode);
                 payload.put("ics_code", icsCode);
             }
 
@@ -996,29 +995,24 @@ public class MainActivity extends Activity {
 
     private void autoLoginRadioStation(String radioPkg, String user, String pass) {
         if (radioPkg == null || radioPkg.isEmpty()) {
-            radioPkg = "com.radiostation";
+            radioPkg = "vn.phitn.app.radiostation";
         }
-        runRootCommand("am force-stop " + radioPkg + " ; monkey -p " + radioPkg + " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1");
-
-        try { Thread.sleep(4000); } catch (InterruptedException ignored) {}
-
         String loginCmd =
-                "SIZE=$(wm size | grep -oE '[0-9]+x[0-9]+' | tail -n 1) ; " +
-                        "W=${SIZE%x*} ; H=${SIZE#*x} ; " +
-                        "if [ -z \"$W\" ]; then W=1920; H=1080; fi ; " +
-                        "X=$((W / 2)) ; " +
-                        "Y_USER=$((H * 345 / 1000)) ; " +
-                        "Y_PASS=$((H * 475 / 1000)) ; " +
-                        "Y_BTN=$((H * 660 / 1000)) ; " +
-                        "input tap $X $Y_USER ; sleep 0.6 ; " +
-                        "input keyevent 123 ; input keyevent 67 67 67 67 67 67 67 67 67 67 ; " +
-                        "input text '" + user + "' ; sleep 0.6 ; " +
-                        "if dumpsys input_method 2>/dev/null | grep -q 'mInputShown=true'; then input keyevent 4; sleep 0.8; fi ; " +
-                        "input tap $X $Y_PASS ; sleep 0.6 ; " +
-                        "input keyevent 123 ; input keyevent 67 67 67 67 67 ; " +
-                        "input text '" + pass + "' ; sleep 0.6 ; " +
-                        "if dumpsys input_method 2>/dev/null | grep -q 'mInputShown=true'; then input keyevent 4; sleep 0.8; fi ; " +
-                        "input tap $X $Y_BTN";
+                "PASS_MD5=$(printf '%s' '" + pass + "' | md5sum | cut -d' ' -f1) ; " +
+                "for pkg in " + radioPkg + " vn.phitn.app.radiostation com.radiostation; do " +
+                "  am force-stop $pkg 2>/dev/null ; " +
+                "  for base in /data_mirror/data_ce/null/0/$pkg /data/user/0/$pkg /data/data/$pkg; do " +
+                "    if [ -d \"$base\" ]; then " +
+                "      mkdir -p \"$base/shared_prefs\" 2>/dev/null ; " +
+                "      printf '<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\" ?>\\n<map>\\n    <string name=\"user_info\">{&quot;username&quot;:&quot;%s&quot;,&quot;password&quot;:&quot;%s&quot;}</string>\\n</map>\\n' '" + user + "' \"$PASS_MD5\" > \"$base/shared_prefs/${pkg}_preferences.xml\" ; " +
+                "      OWNER=$(stat -c '%u:%g' \"$base\" 2>/dev/null) ; " +
+                "      if [ -n \"$OWNER\" ]; then chown -R $OWNER \"$base/shared_prefs\" 2>/dev/null; fi ; " +
+                "      chmod 660 \"$base/shared_prefs/\"*.xml 2>/dev/null ; " +
+                "    fi ; " +
+                "  done ; " +
+                "done ; " +
+                "monkey -p " + radioPkg + " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || " +
+                "monkey -p vn.phitn.app.radiostation -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1";
         runRootCommand(loginCmd);
     }
 

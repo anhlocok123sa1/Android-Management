@@ -98,7 +98,7 @@ class WebhookClient:
             return res.get("tasks", [])
         return []
 
-    def create_task(self, template_name: str, target_macs: list) -> list:
+    def create_task(self, template_name: str, target_macs: list, steps_json: str = None, description: str = "") -> list:
         payload = {
             "action": "create_task",
             "template_name": template_name,
@@ -107,6 +107,12 @@ class WebhookClient:
         res = self._post(payload)
         if isinstance(res, dict) and res.get("status") == "ok":
             return res.get("task_ids", [])
+        # Nếu Sheet chưa có template này -> tự động lưu template rồi tạo lại task
+        if steps_json and isinstance(res, dict) and "template" in str(res.get("message", "")).lower():
+            if self.save_template(template_name, steps_json, description):
+                res2 = self._post(payload)
+                if isinstance(res2, dict) and res2.get("status") == "ok":
+                    return res2.get("task_ids", [])
         return []
 
     def save_template(self, name: str, steps_json: str, description: str = "") -> bool:

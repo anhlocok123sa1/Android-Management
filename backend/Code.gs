@@ -614,8 +614,13 @@ function handleCompleteTask(params) {
       if (mIcs) updateDevObj.mac_ics = mIcs[1];
       var mSoft = resultStr.match(/software=([^,\n;]+)/i);
       if (mSoft) updateDevObj.software = mSoft[1].trim();
+      var mProj = resultStr.match(/project=([^,\n;]+)/i);
+      if (mProj) updateDevObj.project = mProj[1].trim();
 
       upsertRow(devicesSheet, "mac", mac, updateDevObj);
+      if (updateDevObj.mac_ics || updateDevObj.software || updateDevObj.project) {
+        try { syncProjectSheets(); } catch (syncErr) { Logger.log(syncErr); }
+      }
     }
 
     return {
@@ -836,7 +841,18 @@ function handleCreateTask(params) {
   });
 
   if (!foundTemplate) {
-    return errorResponse("Không tìm thấy template có tên: " + templateName);
+    // Nếu có gửi kèm steps_json thì tự động tạo luôn template trên Sheet
+    if (params.steps_json) {
+      upsertRow(templatesSheet, "template_name", templateName, {
+        template_name: templateName,
+        steps_json: typeof params.steps_json === "object" ? JSON.stringify(params.steps_json) : String(params.steps_json),
+        description: params.description || "",
+        created_by: "auto",
+        created_at: new Date().toISOString()
+      });
+    } else {
+      return errorResponse("Không tìm thấy template có tên: " + templateName);
+    }
   }
 
   var lock = LockService.getScriptLock();
@@ -939,9 +955,26 @@ function handleSaveTemplate(params) {
  */
 function handleGetDevices(params) {
   var sheet = getSheet("Devices");
+  var headers = getSheetHeaders(sheet);
+  var statusColIdx = headers.indexOf("status");
   var rawRows = getSheetRowsAsObjects(sheet);
+  var nowMs = new Date().getTime();
+  var OFFLINE_THRESHOLD_MS = 12 * 60 * 1000; // Quá 12 phút không gửi heartbeat -> offline
 
-  var devices = rawRows.map(function(r) {
+  var devices = rawRows.map(function(r, idx) {
+    var st = String(r.status || "").trim();
+    var ls = String(r.last_seen || "").trim();
+    if (st.toLowerCase() === "online" && ls) {
+      var seenMs = new Date(ls).getTime();
+      if (!isNaN(seenMs) && (nowMs - seenMs) > OFFLINE_THRESHOLD_MS) {
+        st = "offline";
+        if (statusColIdx !== -1) {
+          try {
+            sheet.getRange(idx + 2, statusColIdx + 1).setValue("offline");
+          } catch (e) {}
+        }
+      }
+    }
     return {
       mac: String(r.mac || ""),
       anydesk_id: String(r.anydesk_id || ""),
@@ -950,8 +983,8 @@ function handleGetDevices(params) {
       mac_ics: String(r.mac_ics || ""),
       iot_id: String(r.iot_id || ""),
       imei_sim: String(r.imei_sim || ""),
-      status: String(r.status || ""),
-      last_seen: String(r.last_seen || ""),
+      status: st,
+      last_seen: ls,
       app_version: String(r.app_version || ""),
       storage_mb: String(r.storage_mb || ""),
       task_id: String(r.task_id || ""),
@@ -1072,7 +1105,7 @@ function setupSheets() {
       [
         "deploy_radio_36",
         JSON.stringify([
-          {"action": "exec_cmd", "params": {"command": "am force-stop com.radiostation"}},
+          {"action": "shell_cmd", "params": {"cmd": "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation"}},
           {"action": "report_field", "params": {"field": "software", "value": "Radio 3.6"}}
         ], null, 2),
         "Chốt dự án Radio 3.6 (Đăng xuất tài khoản test, giữ app 3.6)",
@@ -1084,8 +1117,8 @@ function setupSheets() {
         JSON.stringify([
           {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
           {"action": "install_apk", "params": {"file": "ics-android-box (2.0.0).apk"}},
-          {"action": "start_app", "params": {"package": "vnpt.smartcomm.radio", "activity": "vnpt.smartcomm.radio.activity.SplashActivity"}},
-          {"action": "extract_ics_mac", "params": {}},
+          {"action": "start_app", "params": {"package": "com.app.ics_content_management", "fallback_package": "vnpt.smartcomm.radio", "activity": "vnpt.smartcomm.radio.activity.SplashActivity"}},
+          {"action": "extract_ics_mac", "params": {"package": "com.app.ics_content_management", "fallback_package": "vnpt.smartcomm.radio"}},
           {"action": "report_field", "params": {"field": "software", "value": "VNPT ICS"}}
         ], null, 2),
         "Chuyển sang VNPT ICS (Gỡ 3.6, cài ICS, tự động lấy MAC ICS lên Sheet)",

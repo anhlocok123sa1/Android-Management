@@ -218,9 +218,9 @@ class DashboardFrame(tk.Frame):
 
         last_seen = device.get("last_seen", "")
         mins = self.parse_time_diff_minutes(last_seen)
-        if mins <= 15:
+        if mins <= 8:
             return "🟢 Online", "online"
-        elif mins <= 45:
+        elif mins <= 12:
             return "🟡 Chậm", "slow"
         else:
             return "🔴 Offline", "offline"
