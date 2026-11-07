@@ -59,16 +59,236 @@ const DEFAULT_TEMPLATES = [
 ];
 
 // ============================================================================
-// INITIALIZATION
+// AUTHENTICATION & SECURITY (SHA-256 SALTED HASH)
 // ============================================================================
-window.addEventListener("DOMContentLoaded", () => {
+const AUTH_SALT = "SGL_BROADCAST_AUTH_2026";
+// SHA-256("admin:<password>:SGL_BROADCAST_AUTH_2026")
+const ADMIN_AUTH_HASH = "1ba829b76a47773c9a3257e995cc4e790621de7b2e7123eb502f822d61fe8387";
+const AUTH_STORAGE_KEY = "sgl_cloud_auth_session_v1";
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+let syncIntervalId = null;
+let failedLoginAttempts = 0;
+let loginLockUntil = 0;
+
+// Pure-JS SHA-256 fallback (for file:// or non-HTTPS LAN access) + Web Crypto API
+async function sha256Hex(asciiStr) {
+  if (window.crypto && window.crypto.subtle) {
+    try {
+      const msgBuffer = new TextEncoder().encode(asciiStr);
+      const hashBuffer = await window.crypto.subtle.digest("SHA-256", msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    } catch (e) {
+      // Fall through to pure JS SHA-256
+    }
+  }
+  return sha256PureJS(asciiStr);
+}
+
+function sha256PureJS(ascii) {
+  function rightRotate(value, amount) {
+    return (value >>> amount) | (value << (32 - amount));
+  }
+  const mathPow = Math.pow;
+  const maxWord = mathPow(2, 32);
+  const lengthProperty = "length";
+  let i, j;
+  let result = "";
+  const words = [];
+  const asciiBitLength = ascii[lengthProperty] * 8;
+  let hash = (sha256PureJS.h = sha256PureJS.h || []);
+  const k = (sha256PureJS.k = sha256PureJS.k || []);
+  let primeCounter = k[lengthProperty];
+  const isComposite = {};
+  for (let candidate = 2; primeCounter < 64; candidate++) {
+    if (!isComposite[candidate]) {
+      for (i = 0; i < 313; i += candidate) {
+        isComposite[i] = candidate;
+      }
+      hash[primeCounter] = (mathPow(candidate, 0.5) * maxWord) | 0;
+      k[primeCounter++] = (mathPow(candidate, 1 / 3) * maxWord) | 0;
+    }
+  }
+  ascii += "\x80";
+  while ((ascii[lengthProperty] % 64) - 56) ascii += "\x00";
+  for (i = 0; i < ascii[lengthProperty]; i++) {
+    j = ascii.charCodeAt(i);
+    if (j >> 8) return "";
+    words[i >> 2] |= j << ((3 - (i % 4)) * 8);
+  }
+  words[words[lengthProperty]] = (asciiBitLength / maxWord) | 0;
+  words[words[lengthProperty]] = asciiBitLength;
+  for (j = 0; j < words[lengthProperty]; ) {
+    const w = words.slice(j, (j += 16));
+    const oldHash = hash;
+    hash = hash.slice(0, 8);
+    for (i = 0; i < 64; i++) {
+      const i2 = i + j;
+      const w15 = w[i - 15],
+        w2 = w[i - 2];
+      const a = hash[0],
+        e = hash[4];
+      const temp1 =
+        hash[7] +
+        (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25)) +
+        ((e & hash[5]) ^ (~e & hash[6])) +
+        k[i] +
+        (w[i] =
+          i < 16
+            ? w[i]
+            : (w[i - 16] +
+                (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3)) +
+                w[i - 7] +
+                (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))) |
+              0);
+      const temp2 =
+        (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22)) +
+        ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+      hash = [(temp1 + temp2) | 0].concat(hash);
+      hash[4] = (hash[4] + temp1) | 0;
+    }
+    for (i = 0; i < 8; i++) {
+      hash[i] = (hash[i] + oldHash[i]) | 0;
+    }
+  }
+  for (i = 0; i < 8; i++) {
+    for (j = 3; j + 1; j--) {
+      const b = (hash[i] >> (j * 8)) & 255;
+      result += (b < 16 ? 0 : "") + b.toString(16);
+    }
+  }
+  return result;
+}
+
+function isSessionAuthenticated() {
+  try {
+    const rawSession = sessionStorage.getItem(AUTH_STORAGE_KEY);
+    if (rawSession) {
+      const parsed = JSON.parse(rawSession);
+      if (parsed && parsed.hash === ADMIN_AUTH_HASH) return true;
+    }
+    const rawLocal = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (rawLocal) {
+      const parsed = JSON.parse(rawLocal);
+      if (parsed && parsed.hash === ADMIN_AUTH_HASH && parsed.expiresAt > Date.now()) {
+        return true;
+      } else {
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+      }
+    }
+  } catch (e) {
+    // Ignore storage errors
+  }
+  return false;
+}
+
+function unlockApplication() {
+  const gate = document.getElementById("loginGate");
+  const topbar = document.getElementById("appTopbar");
+  const main = document.getElementById("appMain");
+  if (gate) gate.style.display = "none";
+  if (topbar) topbar.style.display = "flex";
+  if (main) main.style.display = "block";
+
   document.getElementById("txtWebhookUrl").value = state.webhookUrl;
   document.getElementById("txtSheetUrl").value = state.sheetUrl;
   document.getElementById("txtDefaultAdPass").value = state.adPass;
   document.getElementById("btnOpenSheetTop").href = state.sheetUrl;
 
   refreshAllData();
-  setInterval(refreshAllData, 30000);
+  if (syncIntervalId) clearInterval(syncIntervalId);
+  syncIntervalId = setInterval(refreshAllData, 30000);
+}
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  const errBox = document.getElementById("loginErrorBox");
+  const card = document.getElementById("loginCard");
+
+  if (Date.now() < loginLockUntil) {
+    const remainSec = Math.ceil((loginLockUntil - Date.now()) / 1000);
+    errBox.textContent = `⏳ Đăng nhập sai quá nhiều lần. Vui lòng thử lại sau ${remainSec} giây.`;
+    errBox.style.display = "block";
+    return;
+  }
+
+  const username = (document.getElementById("loginUsername").value || "").trim().toLowerCase();
+  const password = (document.getElementById("loginPassword").value || "").trim();
+  const remember = document.getElementById("loginRemember").checked;
+
+  const computedHash = await sha256Hex(`${username}:${password}:${AUTH_SALT}`);
+
+  if (username === "admin" && computedHash === ADMIN_AUTH_HASH) {
+    failedLoginAttempts = 0;
+    errBox.style.display = "none";
+    const tokenObj = {
+      user: "admin",
+      hash: ADMIN_AUTH_HASH,
+      expiresAt: Date.now() + SEVEN_DAYS_MS
+    };
+    sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(tokenObj));
+    if (remember) {
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(tokenObj));
+    } else {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+    document.getElementById("loginPassword").value = "";
+    showToast("🔓 Đăng nhập thành công! Chào mừng Quản trị viên.");
+    unlockApplication();
+  } else {
+    failedLoginAttempts++;
+    card.classList.remove("shake");
+    void card.offsetWidth;
+    card.classList.add("shake");
+
+    if (failedLoginAttempts >= 5) {
+      loginLockUntil = Date.now() + 30000;
+      failedLoginAttempts = 0;
+      errBox.textContent = "🚫 Nhập sai 5 lần liên tiếp! Tạm khóa đăng nhập trong 30 giây.";
+    } else {
+      errBox.textContent = `❌ Sai tài khoản hoặc mật khẩu bảo mật! (Còn ${5 - failedLoginAttempts} lần thử)`;
+    }
+    errBox.style.display = "block";
+  }
+}
+
+function togglePasswordVisibility() {
+  const input = document.getElementById("loginPassword");
+  const btn = document.getElementById("btnTogglePass");
+  if (input.type === "password") {
+    input.type = "text";
+    btn.textContent = "🙈";
+  } else {
+    input.type = "password";
+    btn.textContent = "👁";
+  }
+}
+
+function handleLogout() {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+  if (syncIntervalId) {
+    clearInterval(syncIntervalId);
+    syncIntervalId = null;
+  }
+  document.getElementById("appTopbar").style.display = "none";
+  document.getElementById("appMain").style.display = "none";
+  document.getElementById("loginGate").style.display = "flex";
+  document.getElementById("loginPassword").value = "";
+  showToast("🔒 Đã đăng xuất khỏi hệ thống an toàn.");
+}
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+window.addEventListener("DOMContentLoaded", () => {
+  if (isSessionAuthenticated()) {
+    unlockApplication();
+  } else {
+    const userInp = document.getElementById("loginUsername");
+    if (userInp) userInp.focus();
+  }
 });
 
 // ============================================================================
