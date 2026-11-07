@@ -364,7 +364,7 @@ async function refreshAllData() {
     ]);
 
     if (devRes && Array.isArray(devRes.devices)) {
-      state.devices = devRes.devices;
+      state.devices = mergeDuplicateAnydeskRows(devRes.devices);
     }
 
     if (tplRes && Array.isArray(tplRes.templates) && tplRes.templates.length > 0) {
@@ -393,6 +393,50 @@ function getDiffMinutes(lastSeenStr) {
   if (isNaN(ts)) return 999999;
   const diffMs = Date.now() - ts;
   return Math.max(0, diffMs / 60000);
+}
+
+/**
+ * Tự động gộp các dòng chờ CHUA_MAC_<anydesk> (từ Sheet dự án cũ) với dòng MAC thật
+ * khi Box cũ được cài App quản lý và gửi Heartbeat có cùng mã AnyDesk.
+ */
+function mergeDuplicateAnydeskRows(rawDevices) {
+  const placeholderByAd = {};
+  const realByAd = {};
+
+  rawDevices.forEach(d => {
+    const ad = String(d.anydesk_id || "").replace(/[\s\-]/g, "").trim();
+    const mac = String(d.mac || "").trim().toUpperCase();
+    if (!ad) return;
+    if (mac.startsWith("CHUA_MAC_")) {
+      placeholderByAd[ad] = d;
+    } else {
+      realByAd[ad] = d;
+    }
+  });
+
+  const mergedList = [];
+  rawDevices.forEach(d => {
+    const ad = String(d.anydesk_id || "").replace(/[\s\-]/g, "").trim();
+    const mac = String(d.mac || "").trim().toUpperCase();
+    if (mac.startsWith("CHUA_MAC_") && ad && realByAd[ad]) {
+      // Đã có Box thật cùng mã AnyDesk -> Gộp tên Dự án từ dòng chờ sang dòng Box thật
+      const realDev = realByAd[ad];
+      if ((!realDev.project || realDev.project === "Kho thiết bị") && d.project && d.project !== "Kho thiết bị") {
+        realDev.project = d.project;
+        // Đồng bộ ngầm dự án của Box thật lên Sheet
+        apiPost({
+          action: "assign_project",
+          target_macs: [realDev.mac],
+          project: d.project,
+          software: realDev.software || d.software || "Radio 3.6"
+        }).catch(() => {});
+      }
+      return; // Bỏ qua dòng CHUA_MAC_ trùng lặp
+    }
+    mergedList.push(d);
+  });
+
+  return mergedList;
 }
 
 function evaluateDeviceStatus(dev) {
@@ -793,6 +837,92 @@ async function confirmAddDevice() {
     }
   } catch (err) {
     showToast(`❌ Lỗi kết nối: ${err.message}`, true);
+  }
+}
+
+function openBulkImportOldProjectModal() {
+  document.getElementById("txtBulkOldProjectName").value = "";
+  document.getElementById("txtBulkOldAnydeskList").value = "";
+  document.getElementById("modalBulkImportOldProject").classList.add("open");
+}
+
+async function confirmBulkImportOldProject() {
+  const projName = document.getElementById("txtBulkOldProjectName").value.trim();
+  const defaultSoft = document.getElementById("selBulkOldSoftware").value;
+  const rawText = document.getElementById("txtBulkOldAnydeskList").value || "";
+
+  if (!projName) {
+    showToast("Vui lòng nhập Tên Dự Án (Tên Sheet mới cần tạo)!", true);
+    return;
+  }
+
+  // Trích xuất tất cả các mã AnyDesk (8-11 chữ số) từ nội dung dán vào
+  const lines = rawText.split(/[\r\n,;]+/);
+  const adSet = new Set();
+  lines.forEach(line => {
+    const cleaned = line.replace(/[\s\-]/g, "").trim();
+    if (/^\d{8,11}$/.test(cleaned)) {
+      adSet.add(cleaned);
+    } else {
+      const m = line.match(/\b(\d[\d\s]{7,13}\d)\b/);
+      if (m) {
+        const digits = m[1].replace(/\s+/g, "");
+        if (/^\d{8,11}$/.test(digits)) adSet.add(digits);
+      }
+    }
+  });
+
+  const adList = Array.from(adSet);
+  if (adList.length === 0) {
+    showToast("Không tìm thấy mã AnyDesk hợp lệ nào (8–11 chữ số) trong danh sách vừa dán!", true);
+    return;
+  }
+
+  const btn = document.getElementById("btnConfirmBulkOld");
+  btn.disabled = true;
+  btn.textContent = `⏳ Đang tạo Sheet & nạp ${adList.length} mã AnyDesk...`;
+
+  try {
+    // Kiểm tra xem có mã AnyDesk nào đã có MAC thật trên hệ thống chưa để giữ nguyên MAC thật
+    const existingByAd = {};
+    state.devices.forEach(d => {
+      const cleanAd = String(d.anydesk_id || "").replace(/[\s\-]/g, "").trim();
+      if (cleanAd) existingByAd[cleanAd] = d;
+    });
+
+    const devicesPayload = adList.map(ad => {
+      const ex = existingByAd[ad];
+      const realMac = ex && ex.mac && !String(ex.mac).startsWith("CHUA_MAC_") ? ex.mac : `CHUA_MAC_${ad}`;
+      const soft = ex && ex.software && ex.software !== "Chưa đồng bộ" ? ex.software : defaultSoft;
+      return {
+        mac: realMac,
+        anydesk_id: ad,
+        project: projName,
+        software: soft,
+        status: ex ? ex.status : "offline",
+        last_seen: ex ? ex.last_seen : "",
+        mac_ics: ex ? ex.mac_ics : ""
+      };
+    });
+
+    const res = await apiPost({
+      action: "batch_import_devices",
+      devices: devicesPayload
+    });
+
+    if (res && res.status === "ok") {
+      closeModal("modalBulkImportOldProject");
+      showToast(`✔ Đã tạo Sheet dự án "${projName}" với ${adList.length} mã AnyDesk!`);
+      await refreshAllData();
+      setProjectFilter(projName);
+    } else {
+      showToast(`❌ Lỗi nạp danh sách: ${(res && res.message) || "Không xác định"}`, true);
+    }
+  } catch (err) {
+    showToast(`❌ Lỗi kết nối: ${err.message}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "📥 Tạo Sheet Dự Án & Nạp Mã AnyDesk";
   }
 }
 

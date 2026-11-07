@@ -221,8 +221,11 @@
           <button class="btn btn-primary" onclick="openQuickDeployModal()">
             🚀 Chốt Dự Án Từ Xa
           </button>
-          <button class="btn btn-cyan" onclick="openAddDeviceModal()">
-            ➕ Thêm Box Mới
+          <button class="btn btn-cyan" onclick="openBulkImportOldProjectModal()">
+            📋 Thêm Dự Án Cũ (Dán DS AnyDesk)
+          </button>
+          <button class="btn btn-outline" onclick="openAddDeviceModal()">
+            ➕ Thêm Box Lẻ
           </button>
           <button class="btn btn-outline" onclick="exportCurrentViewCsv()">
             📥 Xuất Excel (CSV)
@@ -510,6 +513,55 @@
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
         <button class="btn btn-outline" onclick="closeModal('modalAddDevice')">Hủy</button>
         <button class="btn btn-primary" onclick="confirmAddDevice()">➕ Lưu Thiết Bị</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 3: THÊM DỰ ÁN CŨ (DÁN DANH SÁCH MÃ ANYDESK TẠO SHEET DỰ ÁN)     -->
+  <!-- ===================================================================== -->
+  <div class="modal-backdrop" id="modalBulkImportOldProject">
+    <div class="modal-box" style="max-width:580px;">
+      <div class="modal-title">📋 Thêm Dự Án Cũ — Dán Danh Sách Mã AnyDesk</div>
+      <p style="font-size:12.5px; color:var(--text-secondary); margin-bottom:12px; line-height:1.5;">
+        Nhập tên dự án (sẽ tự động tạo 1 Sheet riêng trên Google Sheet) và dán danh sách mã AnyDesk của dự án đó.
+        Sau đó khi bạn vào AnyDesk từng Box cài <code>00_AutoSetup.apk</code>, App sẽ <b>tự động dò mã AnyDesk trên Sheet</b>,
+        điền MAC thật, cập nhật <b>Phần mềm đang sử dụng</b> và trạng thái <b>Online / Offline</b>.
+      </p>
+      <div class="form-row">
+        <label>Tên Dự Án / Tên Sheet Mới (*):</label>
+        <input
+          type="text"
+          id="txtBulkOldProjectName"
+          list="dlExistingProjects"
+          class="input-control"
+          placeholder="VD: Xã Hòa Hiệp (Dự án cũ)"
+        />
+      </div>
+      <div class="form-row">
+        <label>Phần mềm mặc định ban đầu (Sẽ tự động cập nhật lại khi cài App vào Box):</label>
+        <select id="selBulkOldSoftware" class="select-control">
+          <option value="Chưa đồng bộ">🔄 Tự động nhận diện khi cài App lên Box</option>
+          <option value="Radio 3.6">Radio 3.6</option>
+          <option value="VNPT ICS">VNPT ICS</option>
+          <option value="Radio 1.66">Radio 1.66</option>
+          <option value="Radio 2.0">Radio 2.0</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Dán danh sách mã AnyDesk (Mỗi dòng 1 mã hoặc copy từ Excel/Zalo):</label>
+        <textarea
+          id="txtBulkOldAnydeskList"
+          class="code-editor"
+          style="min-height:170px;"
+          placeholder="1371078125&#10;1074358911&#10;1748089615&#10;..."
+        ></textarea>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button class="btn btn-outline" onclick="closeModal('modalBulkImportOldProject')">Hủy</button>
+        <button class="btn btn-primary" id="btnConfirmBulkOld" onclick="confirmBulkImportOldProject()">
+          📥 Tạo Sheet Dự Án &amp; Nạp Mã AnyDesk
+        </button>
       </div>
     </div>
   </div>
