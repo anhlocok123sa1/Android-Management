@@ -568,7 +568,7 @@ function renderDeviceTable() {
     if (fStat !== "ALL" && st.tag !== fStat) return false;
 
     if (q) {
-      const hay = `${d.mac} ${d.anydesk_id} ${proj} ${soft} ${d.mac_ics || ""} ${d.notes || ""}`.toLowerCase();
+      const hay = `${d.mac} ${d.anydesk_id} ${d.iot_id || ""} ${proj} ${soft} ${d.mac_ics || ""} ${d.notes || ""}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -587,7 +587,7 @@ function renderDeviceTable() {
   if (filtered.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="12" style="text-align:center; padding:32px; color:var(--text-secondary);">
+        <td colspan="13" style="text-align:center; padding:32px; color:var(--text-secondary);">
           Không tìm thấy thiết bị nào khớp với bộ lọc hiện tại.
         </td>
       </tr>
@@ -599,6 +599,7 @@ function renderDeviceTable() {
   filtered.forEach((d, idx) => {
     const mac = d.mac || "";
     const adId = d.anydesk_id || "";
+    const iotId = d.iot_id || "-";
     const proj = d.project || "Kho thiết bị";
     const soft = d.software || "Radio 3.6";
     const ics = d.mac_ics || "-";
@@ -614,6 +615,7 @@ function renderDeviceTable() {
 
     const safeMac = escapeHtml(mac);
     const safeAd = escapeHtml(adId);
+    const safeIot = escapeHtml(iotId);
 
     html += `
       <tr class="${isChecked ? 'selected-row' : ''}">
@@ -631,6 +633,9 @@ function renderDeviceTable() {
           <span class="copy-chip" style="color:var(--accent-green); font-weight:700;" onclick="copyText('${safeAd}', 'Đã chép AnyDesk: ${safeAd}')" title="Bấm để sao chép AnyDesk ID">
             ${safeAd || "Chưa có"}
           </span>
+        </td>
+        <td class="mono">
+          ${iotId !== "-" ? `<span class="copy-chip" style="color:var(--accent-cyan);" onclick="copyText('${safeIot}', 'Đã chép Mã IoT: ${safeIot}')" title="Bấm để sao chép Mã IoT">${safeIot}</span>` : "-"}
         </td>
         <td><span class="badge badge-proj">${escapeHtml(proj)}</span></td>
         <td><span class="badge badge-soft">${escapeHtml(soft)}</span></td>
@@ -799,38 +804,50 @@ async function confirmAssignProject() {
 // ADD DEVICE MODAL
 // ============================================================================
 function openAddDeviceModal() {
+  document.getElementById("txtAddMac").value = "";
+  document.getElementById("txtAddAnydesk").value = "";
+  document.getElementById("txtAddIot").value = "";
+  document.getElementById("txtAddIcs").value = "";
+  document.getElementById("txtAddImei").value = "";
+  document.getElementById("txtAddNotes").value = "";
   document.getElementById("modalAddDevice").classList.add("open");
 }
 
 async function confirmAddDevice() {
-  let mac = (document.getElementById("txtAddMac").value || "").trim().toUpperCase();
-  const adId = (document.getElementById("txtAddAnydesk").value || "").trim();
+  let mac = (document.getElementById("txtAddMac").value || "").trim().replace(/[:\-]/g, "").toUpperCase();
+  const adId = (document.getElementById("txtAddAnydesk").value || "").replace(/[\s\-]/g, "").trim();
+  const iotId = (document.getElementById("txtAddIot").value || "").trim();
   const proj = (document.getElementById("txtAddProject").value || "Kho thiết bị").trim();
   const soft = document.getElementById("selAddSoftware").value;
   const ics = (document.getElementById("txtAddIcs").value || "").trim();
+  const imei = (document.getElementById("txtAddImei").value || "").trim();
+  const notes = (document.getElementById("txtAddNotes").value || "").trim();
 
   if (!adId && !mac) {
     showToast("Vui lòng nhập ít nhất Mã AnyDesk ID hoặc MAC!", true);
     return;
   }
   if (!mac) {
-    mac = `BOX_${adId.replace(/\s+/g, "")}`;
+    mac = `CHUA_MAC_${adId}`;
   }
 
   closeModal("modalAddDevice");
-  showToast(`⏳ Đang đăng ký thiết bị ${mac}...`);
+  showToast(`⏳ Đang đăng ký thiết bị ${adId || mac}...`);
 
   try {
     const res = await apiPost({
       action: "register_device",
       mac: mac,
       anydesk_id: adId,
+      iot_id: iotId,
       project: proj,
       software: soft,
-      mac_ics: ics
+      mac_ics: ics,
+      imei_sim: imei,
+      notes: notes
     });
     if (res && res.status === "ok") {
-      showToast(`✔ Đã lưu thiết bị ${mac} lên Google Sheet!`);
+      showToast(`✔ Đã lưu thiết bị ${adId || mac} (Mã IoT: ${iotId || "Không"}) lên Google Sheet!`);
       refreshAllData();
     } else {
       showToast(`❌ Lỗi: ${(res && res.message) || "Không thể lưu thiết bị"}`, true);
@@ -1193,19 +1210,22 @@ function exportCurrentViewCsv() {
     showToast("Không có dữ liệu để xuất!", true);
     return;
   }
-  const headers = ["STT", "MAC", "AnyDesk_ID", "Du_An", "Phan_Mem", "Ma_ICS", "Trang_Thai", "Lan_Cuoi_Online", "Bo_Nho_MB"];
+  const headers = ["STT", "MAC", "AnyDesk_ID", "Ma_IoT", "Du_An", "Phan_Mem", "Ma_ICS", "IMEI_SIM", "Trang_Thai", "Lan_Cuoi_Online", "Bo_Nho_MB", "Ghi_Chu"];
   const rows = state.filteredDevices.map((d, i) => {
     const st = evaluateDeviceStatus(d);
     return [
       i + 1,
       d.mac || "",
       d.anydesk_id || "",
+      `"${(d.iot_id || "").replace(/"/g, '""')}"`,
       `"${(d.project || "").replace(/"/g, '""')}"`,
       `"${(d.software || "").replace(/"/g, '""')}"`,
       d.mac_ics || "",
+      `"${(d.imei_sim || "").replace(/"/g, '""')}"`,
       st.tag,
       d.last_seen || "",
-      d.storage_mb || ""
+      d.storage_mb || "",
+      `"${(d.notes || "").replace(/"/g, '""')}"`
     ].join(",");
   });
 

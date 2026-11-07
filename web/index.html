@@ -249,6 +249,7 @@
                 <th>Trạng Thái</th>
                 <th>Địa Chỉ MAC</th>
                 <th>AnyDesk ID</th>
+                <th>Mã IoT</th>
                 <th>Dự Án (Địa phương)</th>
                 <th>Phần Mềm</th>
                 <th>Mã ICS</th>
@@ -260,7 +261,7 @@
             </thead>
             <tbody id="deviceTableBody">
               <tr>
-                <td colspan="12" style="text-align:center; padding:32px; color:var(--text-secondary);">
+                <td colspan="13" style="text-align:center; padding:32px; color:var(--text-secondary);">
                   ⏳ Đang tải danh sách thiết bị từ Google Sheet Cloud...
                 </td>
               </tr>
@@ -483,32 +484,50 @@
   <!-- ===================================================================== -->
   <div class="modal-backdrop" id="modalAddDevice">
     <div class="modal-box">
-      <div class="modal-title">➕ Đăng Ký / Thêm Android Box Lên Sheet</div>
+      <div class="modal-title">➕ Đăng Ký / Thêm Android Box Lẻ Lên Sheet</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="form-row">
+          <label>Mã AnyDesk ID (*):</label>
+          <input type="text" id="txtAddAnydesk" class="input-control mono" placeholder="VD: 1371078125" />
+        </div>
+        <div class="form-row">
+          <label>Mã IoT (Mạch IoT):</label>
+          <input type="text" id="txtAddIot" class="input-control mono" placeholder="VD: 900EB3... / Mã IoT" />
+        </div>
+      </div>
       <div class="form-row">
-        <label>Địa chỉ MAC (hoặc để trống sẽ tự tạo mã theo AnyDesk):</label>
+        <label>Địa chỉ MAC Android (hoặc để trống sẽ tự tạo theo AnyDesk):</label>
         <input type="text" id="txtAddMac" class="input-control mono" placeholder="VD: 900EB3D6BF2C" />
       </div>
-      <div class="form-row">
-        <label>Mã AnyDesk ID (*):</label>
-        <input type="text" id="txtAddAnydesk" class="input-control mono" placeholder="VD: 1371078125" />
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="form-row">
+          <label>Dự án:</label>
+          <input type="text" id="txtAddProject" list="dlExistingProjects" class="input-control" value="Kho thiết bị" />
+        </div>
+        <div class="form-row">
+          <label>Phần mềm cài đặt:</label>
+          <select id="selAddSoftware" class="select-control">
+            <option value="Radio 3.6 (Test)">Radio 3.6 (Test)</option>
+            <option value="Radio 3.6">Radio 3.6</option>
+            <option value="VNPT ICS">VNPT ICS</option>
+            <option value="Radio 1.66">Radio 1.66</option>
+            <option value="Radio 2.0">Radio 2.0</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="form-row">
+          <label>Mã ICS (Nếu có):</label>
+          <input type="text" id="txtAddIcs" class="input-control mono" placeholder="Tùy chọn" />
+        </div>
+        <div class="form-row">
+          <label>IMEI SIM (Nếu có):</label>
+          <input type="text" id="txtAddImei" class="input-control mono" placeholder="Tùy chọn" />
+        </div>
       </div>
       <div class="form-row">
-        <label>Dự án:</label>
-        <input type="text" id="txtAddProject" list="dlExistingProjects" class="input-control" value="Kho thiết bị" />
-      </div>
-      <div class="form-row">
-        <label>Phần mềm cài đặt:</label>
-        <select id="selAddSoftware" class="select-control">
-          <option value="Radio 3.6 (Test)">Radio 3.6 (Test)</option>
-          <option value="Radio 3.6">Radio 3.6</option>
-          <option value="VNPT ICS">VNPT ICS</option>
-          <option value="Radio 1.66">Radio 1.66</option>
-          <option value="Radio 2.0">Radio 2.0</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <label>Mã ICS (Nếu có):</label>
-        <input type="text" id="txtAddIcs" class="input-control mono" placeholder="Tùy chọn" />
+        <label>Ghi chú / Cụm loa lắp đặt:</label>
+        <input type="text" id="txtAddNotes" class="input-control" placeholder="VD: Cụm loa Thôn 1..." />
       </div>
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
         <button class="btn btn-outline" onclick="closeModal('modalAddDevice')">Hủy</button>
