@@ -488,16 +488,19 @@
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
         <div class="form-row">
           <label>Mã AnyDesk ID (*):</label>
-          <input type="text" id="txtAddAnydesk" class="input-control mono" placeholder="VD: 1371078125" />
+          <input type="text" id="txtAddAnydesk" class="input-control mono" placeholder="VD: 1371078125" oninput="onAddAnydeskInput(this.value)" />
         </div>
         <div class="form-row">
           <label>Mã IoT (Mạch IoT):</label>
-          <input type="text" id="txtAddIot" class="input-control mono" placeholder="VD: 900EB3... / Mã IoT" />
+          <input type="text" id="txtAddIot" class="input-control mono" placeholder="VD: 11738 / Mã IoT" />
         </div>
       </div>
       <div class="form-row">
-        <label>Địa chỉ MAC Android (hoặc để trống sẽ tự tạo theo AnyDesk):</label>
-        <input type="text" id="txtAddMac" class="input-control mono" placeholder="VD: 900EB3D6BF2C" />
+        <label>Địa chỉ MAC Android (Không cần nhập — Tự động lấy khi Box kết nối):</label>
+        <input type="text" id="txtAddMac" class="input-control mono" placeholder="⚡ Để trống: Tự động điền MAC khi Box gửi tín hiệu lần đầu" />
+        <div id="lblAutoMacHint" style="font-size:11.5px; color:var(--accent-cyan); margin-top:4px;">
+          ⚡ Chỉ cần nhập Mã AnyDesk & Mã IoT, hệ thống sẽ tự động lấy MAC thật ngay lần đầu Box kết nối!
+        </div>
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
         <div class="form-row">

@@ -24,6 +24,7 @@ public class AgentService extends Service {
 
     private volatile boolean isRunning = false;
     private volatile boolean initialSyncDone = false;
+    private volatile String lastSyncedAnydeskId = "";
     private Thread pollingThread;
     private WebhookClient webhookClient;
     private TaskExecutor taskExecutor;
@@ -70,6 +71,11 @@ public class AgentService extends Service {
     }
 
     private void pollingLoop() {
+        // Đợi 3 giây ở lần khởi chạy đầu tiên để MainActivity (nếu đang mở) xin quyền Root trước, tránh trùng hộp thoại Superuser
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException ignored) {}
+
         while (isRunning) {
             try {
                 performHeartbeatAndTaskCheck();
@@ -91,12 +97,52 @@ public class AgentService extends Service {
     private void performHeartbeatAndTaskCheck() {
         String mac = DeviceInfo.getMac();
         String anydeskId = readAnydeskId();
+
+        // Ở lần kết nối đầu tiên, nếu chưa đọc được AnyDesk ID (do đang chờ bấm cấp quyền Root hoặc AnyDesk đang khởi tạo),
+        // tự động thử lại tối đa 6 lần (mỗi lần cách nhau 2.5 giây) để đảm bảo gửi kèm cả MAC + AnyDesk ID ngay lần đầu!
+        if (!initialSyncDone && (anydeskId == null || anydeskId.isEmpty())) {
+            for (int retry = 0; retry < 6 && isRunning; retry++) {
+                try {
+                    Thread.sleep(2500);
+                } catch (InterruptedException e) {
+                    break;
+                }
+                anydeskId = readAnydeskId();
+                if (mac == null || mac.isEmpty() || "UNKNOWN".equals(mac)) {
+                    mac = DeviceInfo.getMac();
+                }
+                if (anydeskId != null && !anydeskId.isEmpty()) {
+                    break;
+                }
+            }
+        }
+
         long ramMb = DeviceInfo.getRamMb(this);
         long storageMb = DeviceInfo.getStorageMb();
         String appVersion = DeviceInfo.getAppVersion(this);
         String ip = DeviceInfo.getIpAddress();
         String software = DeviceInfo.detectInstalledSoftware(this);
         String macIcs = "VNPT ICS".equals(software) ? DeviceInfo.extractIcsMacIfPresent() : "";
+
+        // Ngay lần đầu tiên gửi tín hiệu (hoặc ngay khi phát hiện mã AnyDesk mới), gọi đồng bộ đầy đủ (register_device + heartbeat)
+        // để điền thẳng MAC thật vào dòng chờ CHUA_MAC_<anydesk> trên Google Sheet tức thì!
+        if (mac != null && !mac.isEmpty() && !"UNKNOWN".equals(mac)) {
+            if (!initialSyncDone || (!anydeskId.isEmpty() && !anydeskId.equals(lastSyncedAnydeskId))) {
+                try {
+                    WebhookClient.SyncBoxResult syncRes = webhookClient.syncOldBoxByAnydesk(
+                            mac, anydeskId, software, macIcs, appVersion, storageMb, ramMb, ip
+                    );
+                    if (syncRes != null && syncRes.success) {
+                        initialSyncDone = true;
+                        if (!anydeskId.isEmpty()) {
+                            lastSyncedAnydeskId = anydeskId;
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.w(Constants.TAG, "Initial syncOldBoxByAnydesk warning: " + e.getMessage());
+                }
+            }
+        }
 
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String currentTask = prefs.getString(KEY_CURRENT_TASK, "idle");

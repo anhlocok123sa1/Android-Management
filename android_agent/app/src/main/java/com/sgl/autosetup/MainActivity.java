@@ -304,13 +304,31 @@ public class MainActivity extends Activity {
         try {
             String anydeskId = readAnydeskId();
             if (anydeskId != null) {
-                anydeskId = anydeskId.replaceAll("[\\s\\-]", "").trim();
+                anydeskId = anydeskId.replaceAll("[^0-9]", "").trim();
             } else {
                 anydeskId = "";
             }
-            String mac = readFormattedMacAddress();
-            if (mac.isEmpty()) {
-                mac = DeviceInfo.getMac();
+            // Nếu chưa đọc được AnyDesk ID ngay (do đang chờ cấp quyền Root hoặc AnyDesk chưa khởi tạo),
+            // thử lại tối đa 5 lần hoặc tự kích hoạt AnyDesk để lấy bằng được AnyDesk ID + MAC ngay lần đầu!
+            if (anydeskId.isEmpty()) {
+                for (int r = 0; r < 5; r++) {
+                    try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+                    anydeskId = readAnydeskId();
+                    if (anydeskId != null) {
+                        anydeskId = anydeskId.replaceAll("[^0-9]", "").trim();
+                    } else {
+                        anydeskId = "";
+                    }
+                    if (!anydeskId.isEmpty()) break;
+                }
+            }
+            if (anydeskId.isEmpty()) {
+                anydeskId = ensureAnydeskIdReady();
+            }
+
+            String mac = DeviceInfo.getMac();
+            if (mac == null || mac.isEmpty() || "UNKNOWN".equals(mac)) {
+                mac = readFormattedMacAddress();
             }
             String software = DeviceInfo.detectInstalledSoftware(this);
             if (software.isEmpty()) {
@@ -949,6 +967,10 @@ public class MainActivity extends Activity {
     }
 
     private String readFormattedMacAddress() {
+        String mac = DeviceInfo.getMac();
+        if (mac != null && !mac.isEmpty() && !"UNKNOWN".equals(mac)) {
+            return mac;
+        }
         String rawMac = runRootCommand(
                 "(cat /sys/class/net/eth0/address 2>/dev/null || " +
                         "cat /sys/class/net/wlan0/address 2>/dev/null) | head -n 1"
@@ -962,7 +984,7 @@ public class MainActivity extends Activity {
         try {
             Process process = Runtime.getRuntime().exec("su");
             DataOutputStream os = new DataOutputStream(process.getOutputStream());
-            os.writeBytes("if command -v nsenter >/dev/null 2>&1; then\n");
+            os.writeBytes("if nsenter -t 1 -m -- /system/bin/sh -c 'true' >/dev/null 2>&1; then\n");
             os.writeBytes("  nsenter -t 1 -m -- /system/bin/sh << 'EOF_SGL_CMD'\n");
             os.writeBytes(command + "\n");
             os.writeBytes("EOF_SGL_CMD\n");
@@ -1055,21 +1077,7 @@ public class MainActivity extends Activity {
     }
 
     private String readAnydeskId() {
-        String cmd =
-                "for base in " +
-                        "  /data_mirror/data_de/null/0/com.anydesk.anydeskandroid " +
-                        "  /data_mirror/data_ce/null/0/com.anydesk.anydeskandroid " +
-                        "  /data/user_de/0/com.anydesk.anydeskandroid " +
-                        "  /data/user/0/com.anydesk.anydeskandroid " +
-                        "  /data/data/com.anydesk.anydeskandroid; do " +
-                        "  for f in \"$base/files/.anydesk/system.conf\" \"$base/files/.anydesk/service.conf\" \"$base/files/system.conf\"; do " +
-                        "    if [ -f \"$f\" ]; then " +
-                        "      id=$(grep 'ad.anynet.id=' \"$f\" 2>/dev/null | head -n 1 | cut -d'=' -f2); " +
-                        "      if [ -n \"$id\" ]; then echo \"$id\"; exit 0; fi; " +
-                        "    fi; " +
-                        "  done; " +
-                        "done 2>/dev/null";
-        return runRootCommand(cmd);
+        return DeviceInfo.getAnydeskId();
     }
 
     private void autoLoginRadioStation(String radioPkg, String user, String pass) {

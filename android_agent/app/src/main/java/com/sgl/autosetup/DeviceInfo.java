@@ -25,7 +25,7 @@ public class DeviceInfo {
         try {
             Process process = Runtime.getRuntime().exec("su");
             DataOutputStream os = new DataOutputStream(process.getOutputStream());
-            os.writeBytes("if command -v nsenter >/dev/null 2>&1; then\n");
+            os.writeBytes("if nsenter -t 1 -m -- /system/bin/sh -c 'true' >/dev/null 2>&1; then\n");
             os.writeBytes("  nsenter -t 1 -m -- /system/bin/sh << 'EOF_SGL_DEV'\n");
             os.writeBytes(command + "\n");
             os.writeBytes("EOF_SGL_DEV\n");
@@ -40,7 +40,7 @@ public class DeviceInfo {
             while ((line = reader.readLine()) != null) {
                 output.append(line).append("\n");
             }
-            process.waitFor(8, TimeUnit.SECONDS);
+            process.waitFor(10, TimeUnit.SECONDS);
         } catch (Exception ignored) {}
         return output.toString().trim();
     }
@@ -88,16 +88,18 @@ public class DeviceInfo {
                         "  /data/user_de/0/com.anydesk.anydeskandroid " +
                         "  /data/user/0/com.anydesk.anydeskandroid " +
                         "  /data/data/com.anydesk.anydeskandroid; do " +
-                        "  for f in \"$base/files/.anydesk/system.conf\" \"$base/files/.anydesk/service.conf\" \"$base/files/system.conf\"; do " +
+                        "  for f in \"$base/files/.anydesk/system.conf\" \"$base/files/.anydesk/service.conf\" \"$base/files/.anydesk/user.conf\" \"$base/files/system.conf\" \"$base/files/service.conf\"; do " +
                         "    if [ -f \"$f\" ]; then " +
-                        "      id=$(grep 'ad.anynet.id=' \"$f\" 2>/dev/null | head -n 1 | cut -d'=' -f2); " +
+                        "      id=$(grep 'ad.anynet.id=' \"$f\" 2>/dev/null | head -n 1 | cut -d'=' -f2 | tr -dc '0-9'); " +
                         "      if [ -n \"$id\" ]; then echo \"$id\"; exit 0; fi; " +
                         "    fi; " +
                         "  done; " +
-                        "done 2>/dev/null";
+                        "done; " +
+                        "id2=$(grep -rh 'ad.anynet.id=' /data/data/*anydesk* /data/user/0/*anydesk* /data/user_de/0/*anydesk* 2>/dev/null | head -n 1 | cut -d'=' -f2 | tr -dc '0-9'); " +
+                        "if [ -n \"$id2\" ]; then echo \"$id2\"; fi";
         String raw = runRootCommand(cmd);
         if (raw == null) return "";
-        return raw.replaceAll("[\\s\\-]", "").trim();
+        return raw.replaceAll("[^0-9]", "").trim();
     }
 
     /**

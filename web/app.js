@@ -395,9 +395,14 @@ function getDiffMinutes(lastSeenStr) {
   return Math.max(0, diffMs / 60000);
 }
 
+function isPlaceholderMac(mac) {
+  const m = String(mac || "").trim().toUpperCase();
+  return !m || m === "UNKNOWN" || m.startsWith("CHUA_MAC_") || m.startsWith("BOX_");
+}
+
 /**
- * Tự động gộp các dòng chờ CHUA_MAC_<anydesk> (từ Sheet dự án cũ) với dòng MAC thật
- * khi Box cũ được cài App quản lý và gửi Heartbeat có cùng mã AnyDesk.
+ * Tự động gộp các dòng chờ CHUA_MAC_<anydesk> (từ Sheet dự án cũ / Thêm Box Lẻ) với dòng MAC thật
+ * khi Box được cài App quản lý và gửi tín hiệu đầu tiên có cùng mã AnyDesk.
  */
 function mergeDuplicateAnydeskRows(rawDevices) {
   const placeholderByAd = {};
@@ -407,7 +412,7 @@ function mergeDuplicateAnydeskRows(rawDevices) {
     const ad = String(d.anydesk_id || "").replace(/[\s\-]/g, "").trim();
     const mac = String(d.mac || "").trim().toUpperCase();
     if (!ad) return;
-    if (mac.startsWith("CHUA_MAC_")) {
+    if (isPlaceholderMac(mac)) {
       placeholderByAd[ad] = d;
     } else {
       realByAd[ad] = d;
@@ -418,17 +423,36 @@ function mergeDuplicateAnydeskRows(rawDevices) {
   rawDevices.forEach(d => {
     const ad = String(d.anydesk_id || "").replace(/[\s\-]/g, "").trim();
     const mac = String(d.mac || "").trim().toUpperCase();
-    if (mac.startsWith("CHUA_MAC_") && ad && realByAd[ad]) {
-      // Đã có Box thật cùng mã AnyDesk -> Gộp tên Dự án từ dòng chờ sang dòng Box thật
+    if (isPlaceholderMac(mac) && ad && realByAd[ad]) {
+      // Đã có Box thật cùng mã AnyDesk -> Gộp Dự án, Mã IoT, IMEI, Ghi chú từ dòng chờ sang dòng Box thật
       const realDev = realByAd[ad];
+      let needSync = false;
       if ((!realDev.project || realDev.project === "Kho thiết bị") && d.project && d.project !== "Kho thiết bị") {
         realDev.project = d.project;
-        // Đồng bộ ngầm dự án của Box thật lên Sheet
+        needSync = true;
+      }
+      if (!realDev.iot_id && d.iot_id) {
+        realDev.iot_id = d.iot_id;
+        needSync = true;
+      }
+      if (!realDev.imei_sim && d.imei_sim) {
+        realDev.imei_sim = d.imei_sim;
+        needSync = true;
+      }
+      if (!realDev.notes && d.notes) {
+        realDev.notes = d.notes;
+        needSync = true;
+      }
+      if (needSync) {
         apiPost({
-          action: "assign_project",
-          target_macs: [realDev.mac],
-          project: d.project,
-          software: realDev.software || d.software || "Radio 3.6"
+          action: "register_device",
+          mac: realDev.mac,
+          anydesk_id: ad,
+          project: realDev.project,
+          software: realDev.software || d.software || "Radio 3.6",
+          iot_id: realDev.iot_id || "",
+          imei_sim: realDev.imei_sim || "",
+          notes: realDev.notes || ""
         }).catch(() => {});
       }
       return; // Bỏ qua dòng CHUA_MAC_ trùng lặp
@@ -616,6 +640,7 @@ function renderDeviceTable() {
     const safeMac = escapeHtml(mac);
     const safeAd = escapeHtml(adId);
     const safeIot = escapeHtml(iotId);
+    const isPendingMac = isPlaceholderMac(mac);
 
     html += `
       <tr class="${isChecked ? 'selected-row' : ''}">
@@ -625,9 +650,10 @@ function renderDeviceTable() {
         <td class="mono" style="color:var(--text-muted);">${idx + 1}</td>
         <td><span class="badge ${badgeClass}">${st.label}</span></td>
         <td>
-          <span class="copy-chip" onclick="copyText('${safeMac}', 'Đã chép MAC: ${safeMac}')" title="Bấm để sao chép MAC">
-            ${safeMac}
-          </span>
+          ${isPendingMac
+            ? `<span class="badge badge-slow" title="Đang chờ Box (${safeAd}) gửi tín hiệu lần đầu để tự động điền MAC thật">⏳ Tự lấy MAC khi kết nối</span>`
+            : `<span class="copy-chip" onclick="copyText('${safeMac}', 'Đã chép MAC: ${safeMac}')" title="Bấm để sao chép MAC">${safeMac}</span>`
+          }
         </td>
         <td>
           <span class="copy-chip" style="color:var(--accent-green); font-weight:700;" onclick="copyText('${safeAd}', 'Đã chép AnyDesk: ${safeAd}')" title="Bấm để sao chép AnyDesk ID">
@@ -810,7 +836,46 @@ function openAddDeviceModal() {
   document.getElementById("txtAddIcs").value = "";
   document.getElementById("txtAddImei").value = "";
   document.getElementById("txtAddNotes").value = "";
+  const hint = document.getElementById("lblAutoMacHint");
+  if (hint) {
+    hint.style.color = "var(--accent-cyan)";
+    hint.textContent = "⚡ Chỉ cần nhập Mã AnyDesk & Mã IoT, hệ thống sẽ tự động lấy MAC thật ngay lần đầu Box kết nối!";
+  }
   document.getElementById("modalAddDevice").classList.add("open");
+}
+
+function onAddAnydeskInput(val) {
+  const cleanAd = String(val || "").replace(/[\s\-]/g, "").trim();
+  const macInput = document.getElementById("txtAddMac");
+  const hint = document.getElementById("lblAutoMacHint");
+  if (!cleanAd) {
+    if (hint) {
+      hint.style.color = "var(--accent-cyan)";
+      hint.textContent = "⚡ Chỉ cần nhập Mã AnyDesk & Mã IoT, hệ thống sẽ tự động lấy MAC thật ngay lần đầu Box kết nối!";
+    }
+    return;
+  }
+
+  const found = state.devices.find(d => {
+    const dAd = String(d.anydesk_id || "").replace(/[\s\-]/g, "").trim();
+    return dAd === cleanAd && !isPlaceholderMac(d.mac);
+  });
+
+  if (found) {
+    macInput.value = found.mac;
+    if (!document.getElementById("txtAddIot").value && found.iot_id) {
+      document.getElementById("txtAddIot").value = found.iot_id;
+    }
+    if (hint) {
+      hint.style.color = "var(--accent-green)";
+      hint.textContent = `✅ Đã tự động lấy MAC thật (${found.mac}) từ dữ liệu Box đã kết nối!`;
+    }
+  } else {
+    if (hint) {
+      hint.style.color = "var(--accent-cyan)";
+      hint.textContent = "⚡ Không cần nhập MAC — Khi cài 00_AutoSetup.apk lên Box này, MAC thật sẽ tự động điền ngay lần đầu kết nối!";
+    }
+  }
 }
 
 async function confirmAddDevice() {
@@ -824,11 +889,16 @@ async function confirmAddDevice() {
   const notes = (document.getElementById("txtAddNotes").value || "").trim();
 
   if (!adId && !mac) {
-    showToast("Vui lòng nhập ít nhất Mã AnyDesk ID hoặc MAC!", true);
+    showToast("Vui lòng nhập Mã AnyDesk ID!", true);
     return;
   }
-  if (!mac) {
-    mac = `CHUA_MAC_${adId}`;
+  if (!mac && adId) {
+    // Kiểm tra xem Box có mã AnyDesk này đã từng gửi MAC thật lên hệ thống chưa
+    const existing = state.devices.find(d => {
+      const dAd = String(d.anydesk_id || "").replace(/[\s\-]/g, "").trim();
+      return dAd === adId && !isPlaceholderMac(d.mac);
+    });
+    mac = existing ? existing.mac : `CHUA_MAC_${adId}`;
   }
 
   closeModal("modalAddDevice");
@@ -847,7 +917,8 @@ async function confirmAddDevice() {
       notes: notes
     });
     if (res && res.status === "ok") {
-      showToast(`✔ Đã lưu thiết bị ${adId || mac} (Mã IoT: ${iotId || "Không"}) lên Google Sheet!`);
+      const returnedMac = res.mac && !isPlaceholderMac(res.mac) ? ` | MAC: ${res.mac}` : " (Sẽ tự điền MAC khi Box kết nối)";
+      showToast(`✔ Đã lưu AnyDesk ${adId}${returnedMac} lên Google Sheet!`);
       refreshAllData();
     } else {
       showToast(`❌ Lỗi: ${(res && res.message) || "Không thể lưu thiết bị"}`, true);
