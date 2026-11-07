@@ -12,6 +12,12 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.webkit.CookieManager;
+import android.webkit.JsResult;
+import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -68,6 +74,7 @@ public class MainActivity extends Activity {
     private Button btnUtilUninstall;
     private Button btnUtilDateTime;
     private Button btnUtilSaveMk;
+    private Button btnDisableWifi4G;
     private Button btnUtilDeleteSelf;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -254,6 +261,14 @@ public class MainActivity extends Activity {
         btnUtilSaveMk.setLayoutParams(btnParams);
         btnUtilSaveMk.setOnClickListener(v -> new Thread(this::saveAnydeskTemplateToUsb).start());
         utilRow.addView(btnUtilSaveMk);
+
+        btnDisableWifi4G = new Button(this);
+        btnDisableWifi4G.setText("TẮT WIFI 4G (192.168.8.1)");
+        btnDisableWifi4G.setBackgroundColor(Color.parseColor("#00838F"));
+        btnDisableWifi4G.setTextColor(Color.WHITE);
+        btnDisableWifi4G.setLayoutParams(btnParams);
+        btnDisableWifi4G.setOnClickListener(v -> new Thread(this::runDisableSmartWifi4G).start());
+        utilRow.addView(btnDisableWifi4G);
 
         btnUtilDeleteSelf = new Button(this);
         btnUtilDeleteSelf.setText("XÓA 00_AUTOSETUP");
@@ -962,8 +977,204 @@ public class MainActivity extends Activity {
             btnUtilUninstall.setEnabled(enabled);
             btnUtilDateTime.setEnabled(enabled);
             btnUtilSaveMk.setEnabled(enabled);
+            if (btnDisableWifi4G != null) btnDisableWifi4G.setEnabled(enabled);
             btnUtilDeleteSelf.setEnabled(enabled);
         });
+    }
+
+    // =========================================================================
+    // QUY TRÌNH TỰ ĐỘNG TẮT WIFI 2.4G TRÊN MODULE 4G (192.168.8.1)
+    // =========================================================================
+    private void runDisableSmartWifi4G() {
+        setButtonsEnabled(false);
+        log("==================================================");
+        log(">>> BẮT ĐẦU QUY TRÌNH TỰ ĐỘNG TẮT WIFI MODULE 4G (192.168.8.1) <<<");
+        log("[Bước 1/4] Đang kiểm tra kết nối tới trang quản trị " + SmartWifiHelper.DEFAULT_ROUTER_URL + " ...");
+
+        boolean reachable = false;
+        try {
+            HttpURLConnection conn = (HttpURLConnection) new URL(SmartWifiHelper.DEFAULT_ROUTER_URL).openConnection();
+            conn.setConnectTimeout(4000);
+            conn.setReadTimeout(4000);
+            conn.setRequestMethod("GET");
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            reachable = (code >= 200 && code < 500);
+        } catch (Exception e) {
+            log("   (Kiểm tra HTTP lỗi: " + e.getMessage() + ")");
+        }
+
+        if (!reachable) {
+            String pingRes = runRootCommand("ping -c 1 -W 2 192.168.8.1 >/dev/null 2>&1 && echo 'OK'");
+            reachable = "OK".equals(pingRes);
+        }
+
+        if (!reachable) {
+            log("❌ Không kết nối được tới mạch 4G (192.168.8.1)! Hãy kiểm tra module 4G đã cắm vào mạch chưa.");
+            setButtonsEnabled(true);
+            return;
+        }
+
+        log("✔ Đã kết nối tới Smart Wifi System (192.168.8.1). Đang khởi chạy trình tự động tắt Wi-Fi...");
+        mainHandler.post(this::showSmartWifiAutomationDialog);
+    }
+
+    @android.annotation.SuppressLint("SetJavaScriptEnabled")
+    private void showSmartWifiAutomationDialog() {
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(16, 12, 16, 12);
+        container.setBackgroundColor(Color.parseColor("#1E1E1E"));
+
+        TextView tvStepStatus = new TextView(this);
+        tvStepStatus.setText("⏳ Đang mở trang Smart Wifi System (192.168.8.1)...");
+        tvStepStatus.setTextColor(Color.parseColor("#00E676"));
+        tvStepStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        tvStepStatus.setPadding(8, 4, 8, 10);
+        container.addView(tvStepStatus);
+
+        WebView webView = new WebView(this);
+        int webHeightPx = (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, 380, getResources().getDisplayMetrics());
+        LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, webHeightPx);
+        webView.setLayoutParams(webParams);
+
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+
+        try {
+            CookieManager.getInstance().removeAllCookies(null);
+            CookieManager.getInstance().setAcceptCookie(true);
+        } catch (Exception ignored) {}
+
+        webView.setWebViewClient(new WebViewClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
+                result.confirm();
+                return true;
+            }
+
+            @Override
+            public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
+                result.confirm();
+                return true;
+            }
+        });
+        container.addView(webView);
+
+        final boolean[] finished = {false};
+        final long startTimeMs = System.currentTimeMillis();
+        final long[] saveClickedTimeMs = {0L};
+        final SmartWifiHelper.StepStatus[] lastLoggedStatus = {SmartWifiHelper.StepStatus.WAITING};
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("TỰ ĐỘNG TẮT WIFI MODULE 4G (192.168.8.1)")
+                .setView(container)
+                .setCancelable(false)
+                .setNegativeButton("Đóng / Dừng", (d, w) -> {
+                    finished[0] = true;
+                    try {
+                        webView.stopLoading();
+                        webView.destroy();
+                    } catch (Exception ignored) {}
+                    log("⚠ Đã đóng cửa sổ tự động tắt Wi-Fi 4G.");
+                    setButtonsEnabled(true);
+                })
+                .create();
+
+        dialog.show();
+        webView.loadUrl(SmartWifiHelper.DEFAULT_ROUTER_URL);
+
+        final String automationJs = SmartWifiHelper.buildAutomationJs(SmartWifiHelper.DEFAULT_ADMIN_PASSWORD);
+
+        Runnable pollTask = new Runnable() {
+            @Override
+            public void run() {
+                if (finished[0] || isFinishing()) {
+                    return;
+                }
+
+                long elapsed = System.currentTimeMillis() - startTimeMs;
+                if (elapsed > 28000L) {
+                    finished[0] = true;
+                    log("⚠ Hết thời gian chờ (28 giây) khi tự động tắt Wi-Fi 4G. Vui lòng kiểm tra lại.");
+                    try {
+                        if (dialog.isShowing()) dialog.dismiss();
+                        webView.destroy();
+                    } catch (Exception ignored) {}
+                    setButtonsEnabled(true);
+                    return;
+                }
+
+                if (saveClickedTimeMs[0] > 0L && (System.currentTimeMillis() - saveClickedTimeMs[0] >= 3200L)) {
+                    completeSuccess(dialog, webView, finished);
+                    return;
+                }
+
+                webView.evaluateJavascript(automationJs, rawResult -> {
+                    if (finished[0]) return;
+                    SmartWifiHelper.StepStatus status = SmartWifiHelper.parseStepStatus(rawResult);
+
+                    if (status != SmartWifiHelper.StepStatus.WAITING && status != lastLoggedStatus[0]) {
+                        lastLoggedStatus[0] = status;
+                        switch (status) {
+                            case LOGIN_SUBMITTED:
+                                tvStepStatus.setText("[Bước 2/4] 🔑 Đã nhập mật khẩu admin và bấm Login...");
+                                log("[Bước 2/4] 🔑 Đã tự động nhập mật khẩu admin và bấm Login...");
+                                break;
+                            case OPENING_WIFI_MENU:
+                                tvStepStatus.setText("[Bước 3/4] 📂 Đang mở menu WiFi Settings...");
+                                log("[Bước 3/4] 📂 Đang mở menu WiFi Settings...");
+                                break;
+                            case OPENING_24G_MENU:
+                                tvStepStatus.setText("[Bước 3/4] 📂 Đang mở mục 2.4G WiFi Settings...");
+                                log("   -> Đang mở mục 2.4G WiFi Settings...");
+                                break;
+                            case UNCHECKED_ENABLE_WIFI:
+                                tvStepStatus.setText("[Bước 4/4] ✔ Đã bỏ tích 'Enable Wi-Fi', chuẩn bị bấm Save...");
+                                log("   -> Đã bỏ tích 'Enable Wi-Fi' (Tắt sóng Wi-Fi 2.4G)...");
+                                break;
+                            case CLICKED_SAVE:
+                                saveClickedTimeMs[0] = System.currentTimeMillis();
+                                tvStepStatus.setText("[Bước 4/4] 💾 Đã bấm Save! Đang lưu cấu hình vào module 4G...");
+                                log("[Bước 4/4] 💾 Đã bấm Save! Đang đợi module 4G lưu cấu hình...");
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+
+                    if (SmartWifiHelper.isTerminalSuccess(status)) {
+                        completeSuccess(dialog, webView, finished);
+                    } else if (!finished[0]) {
+                        mainHandler.postDelayed(this, 600);
+                    }
+                });
+            }
+        };
+
+        mainHandler.postDelayed(pollTask, 800);
+    }
+
+    private void completeSuccess(AlertDialog dialog, WebView webView, boolean[] finished) {
+        if (finished[0]) return;
+        finished[0] = true;
+        log("🎉 ĐÃ TẮT WIFI 2.4G TRÊN MODULE 4G (192.168.8.1) THÀNH CÔNG!");
+        log("ℹ Lưu ý: Module 4G sẽ tự khởi động lại mạng trong khoảng 10-15 giây.");
+        mainHandler.postDelayed(() -> {
+            try {
+                if (dialog.isShowing()) dialog.dismiss();
+                webView.stopLoading();
+                webView.destroy();
+            } catch (Exception ignored) {}
+            setButtonsEnabled(true);
+        }, 900);
     }
 
     private String readFormattedMacAddress() {
