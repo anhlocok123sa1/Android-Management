@@ -60,6 +60,7 @@ public class MainActivity extends Activity {
     private CheckBox cbAutoRemoveStage2;
 
     private Button btnStage1NewBox;
+    private Button btnSyncOldBox;
     private Button btnStage2Radio36;
     private Button btnStage2Radio166;
     private Button btnStage2Ics;
@@ -104,13 +105,13 @@ public class MainActivity extends Activity {
         stage1Row.setPadding(0, 2, 0, 6);
 
         btnStage1NewBox = new Button(this);
-        btnStage1NewBox.setText("GIAI ĐOẠN 1: CÀI CHUẨN MẠCH MỚI (3.6 + TEST Z755-01) -> SHEET 'Android Mới'");
+        btnStage1NewBox.setText("GIAI ĐOẠN 1: CÀI MẠCH MỚI (3.6 + TEST Z755-01)");
         btnStage1NewBox.setBackgroundColor(Color.parseColor("#1E88E5"));
         btnStage1NewBox.setTextColor(Color.WHITE);
-        btnStage1NewBox.setPadding(15, 16, 15, 16);
+        btnStage1NewBox.setPadding(12, 16, 12, 16);
         LinearLayout.LayoutParams s1BtnParams = new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
-        s1BtnParams.setMargins(4, 0, 12, 0);
+        s1BtnParams.setMargins(4, 0, 8, 0);
         btnStage1NewBox.setLayoutParams(s1BtnParams);
         btnStage1NewBox.setOnClickListener(v -> {
             final String user = edtRadioUser.getText().toString().trim();
@@ -118,6 +119,15 @@ public class MainActivity extends Activity {
             new Thread(() -> runStage1StandardInstall(user, pass)).start();
         });
         stage1Row.addView(btnStage1NewBox);
+
+        btnSyncOldBox = new Button(this);
+        btnSyncOldBox.setText("🔄 ĐỒNG BỘ BOX CŨ LÊN SHEET (TỰ TÌM DỰ ÁN THEO ANYDESK)");
+        btnSyncOldBox.setBackgroundColor(Color.parseColor("#00C853"));
+        btnSyncOldBox.setTextColor(Color.parseColor("#04120A"));
+        btnSyncOldBox.setPadding(12, 16, 12, 16);
+        btnSyncOldBox.setLayoutParams(s1BtnParams);
+        btnSyncOldBox.setOnClickListener(v -> new Thread(() -> syncOldBoxToSheet(false)).start());
+        stage1Row.addView(btnSyncOldBox);
 
         TextView lblUser = new TextView(this);
         lblUser.setText("TK Test: ");
@@ -264,25 +274,93 @@ public class MainActivity extends Activity {
         root.addView(scroll);
 
         setContentView(root);
-        if (getIntent() != null && getIntent().getBooleanExtra("AUTO_START_STAGE1", false)) {
+        boolean autoStartStage1 = getIntent() != null && getIntent().getBooleanExtra("AUTO_START_STAGE1", false);
+        if (autoStartStage1) {
             log("⚡ Nhận tín hiệu từ cáp USB: Tự động kích hoạt GIAI ĐOẠN 1...");
             new Thread(() -> runStage1StandardInstall("z755-01", "2")).start();
+        } else {
+            log("Sẵn sàng! Đang tự động kiểm tra mã AnyDesk và đồng bộ trạng thái Box lên Google Sheet...");
+            new Thread(() -> syncOldBoxToSheet(true)).start();
         }
-        log("Sẵn sàng! Chọn [GIAI ĐOẠN 1] khi cài mạch mới hoặc chọn 1 trong 3 nút [GIAI ĐOẠN 2] khi chốt dự án.");
-
-        new Thread(() -> {
-            String existingId = readAnydeskId();
-            String mac = readFormattedMacAddress();
-            setStatusBanner(existingId, mac, "");
-        }).start();
 
         // Tự động khởi động AgentService chạy ngầm để nhận lệnh từ xa
         try {
             Intent agentIntent = new Intent(this, AgentService.class);
             ContextCompat.startForegroundService(this, agentIntent);
-            log("🚀 Đã kích hoạt AgentService nhận lệnh từ xa.");
+            log("🚀 Đã kích hoạt AgentService chạy nền (Heartbeat 5 phút/lần).");
         } catch (Exception e) {
             log("⚠ Không thể khởi động AgentService: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Tự động đọc AnyDesk ID, MAC và phần mềm phát thanh đang sử dụng trên Box,
+     * tìm kiếm mã AnyDesk trên các Sheet dự án của Google Sheet và đồng bộ trạng thái Online.
+     */
+    private void syncOldBoxToSheet(boolean isAutoStartup) {
+        if (!isAutoStartup) {
+            setButtonsEnabled(false);
+        }
+        try {
+            String anydeskId = readAnydeskId();
+            if (anydeskId != null) {
+                anydeskId = anydeskId.replaceAll("[\\s\\-]", "").trim();
+            } else {
+                anydeskId = "";
+            }
+            String mac = readFormattedMacAddress();
+            if (mac.isEmpty()) {
+                mac = DeviceInfo.getMac();
+            }
+            String software = DeviceInfo.detectInstalledSoftware(this);
+            if (software.isEmpty()) {
+                software = "Chưa cài App Đài";
+            }
+            String macIcs = "VNPT ICS".equals(software) ? DeviceInfo.extractIcsMacIfPresent() : "";
+
+            setStatusBanner(anydeskId, mac, macIcs);
+
+            log("--------------------------------------------------");
+            log("🔍 [ĐỒNG BỘ BOX DỰ ÁN] Đang dò tìm mã AnyDesk [" + (anydeskId.isEmpty() ? "Chưa có" : anydeskId) + "] trên Google Sheet...");
+            log("   • Địa chỉ MAC thiết bị : " + mac);
+            log("   • App đang sử dụng     : " + software + (macIcs.isEmpty() ? "" : (" (MAC ICS: " + macIcs + ")")));
+
+            WebhookClient client = new WebhookClient(getWebhookUrl(findUsbAppFolder()));
+            WebhookClient.SyncBoxResult res = client.syncOldBoxByAnydesk(
+                    mac,
+                    anydeskId,
+                    software,
+                    macIcs,
+                    DeviceInfo.getAppVersion(this),
+                    DeviceInfo.getStorageMb(),
+                    DeviceInfo.getRamMb(this),
+                    DeviceInfo.getIpAddress()
+            );
+
+            if (res.success) {
+                String matchNote = res.matchedByAnydesk
+                        ? "✅ ĐÃ TÌM THẤY MÃ ANYDESK TRÊN DỰ ÁN: " + res.project
+                        : "ℹ Mã AnyDesk chưa có sẵn trong Sheet dự án -> Đã thêm vào: " + res.project;
+                log(matchNote);
+                log("✔ Đã đồng bộ lên Google Sheet: Dự án [" + res.project + "] | App [" + res.software + "] | Trạng thái [ONLINE]");
+                final String finalAd = anydeskId;
+                final String finalMac = mac;
+                final String finalProj = res.project;
+                final String finalSoft = res.software;
+                mainHandler.post(() -> tvAnydeskId.setText(
+                        "ANYDESK: " + (finalAd.isEmpty() ? "Chưa có" : finalAd) +
+                        "  |  MAC: " + finalMac +
+                        "  |  DỰ ÁN: " + finalProj + " (" + finalSoft + " - ONLINE)"
+                ));
+            } else {
+                log("⚠ Chưa thể kết nối Google Sheet: " + res.message);
+            }
+        } catch (Exception e) {
+            log("⚠ Lỗi khi đồng bộ Box lên Sheet: " + e.getMessage());
+        } finally {
+            if (!isAutoStartup) {
+                setButtonsEnabled(true);
+            }
         }
     }
 
@@ -858,6 +936,7 @@ public class MainActivity extends Activity {
     private void setButtonsEnabled(boolean enabled) {
         mainHandler.post(() -> {
             btnStage1NewBox.setEnabled(enabled);
+            if (btnSyncOldBox != null) btnSyncOldBox.setEnabled(enabled);
             btnStage2Radio36.setEnabled(enabled);
             btnStage2Radio166.setEnabled(enabled);
             btnStage2Ics.setEnabled(enabled);

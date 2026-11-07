@@ -23,6 +23,7 @@ public class AgentService extends Service {
     private static final String KEY_CURRENT_TASK = "current_task";
 
     private volatile boolean isRunning = false;
+    private volatile boolean initialSyncDone = false;
     private Thread pollingThread;
     private WebhookClient webhookClient;
     private TaskExecutor taskExecutor;
@@ -92,12 +93,27 @@ public class AgentService extends Service {
         long storageMb = DeviceInfo.getStorageMb();
         String appVersion = DeviceInfo.getAppVersion(this);
         String ip = DeviceInfo.getIpAddress();
+        String software = DeviceInfo.detectInstalledSoftware(this);
+        String macIcs = "VNPT ICS".equals(software) ? DeviceInfo.extractIcsMacIfPresent() : "";
+
+        // Lần đầu tiên Service chạy: tự động tìm mã AnyDesk trên các Sheet dự án và đồng bộ app đang dùng + trạng thái Online
+        if (!initialSyncDone && !mac.isEmpty() && !"UNKNOWN".equals(mac)) {
+            initialSyncDone = true;
+            WebhookClient.SyncBoxResult syncRes = webhookClient.syncOldBoxByAnydesk(
+                    mac, anydeskId, software, macIcs, appVersion, storageMb, ramMb, ip
+            );
+            if (syncRes != null && syncRes.success) {
+                updateNotification("Đã đồng bộ Dự án: " + syncRes.project + " (" + syncRes.software + ")");
+            }
+        }
 
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String currentTask = prefs.getString(KEY_CURRENT_TASK, "idle");
 
-        Log.d(Constants.TAG, "Sending heartbeat for MAC: " + mac + ", task: " + currentTask);
-        String pendingTaskJson = webhookClient.heartbeat(mac, anydeskId, ramMb, storageMb, currentTask, appVersion, ip);
+        Log.d(Constants.TAG, "Sending heartbeat for MAC: " + mac + ", AnyDesk: " + anydeskId + ", soft: " + software);
+        String pendingTaskJson = webhookClient.heartbeat(
+                mac, anydeskId, ramMb, storageMb, currentTask, appVersion, ip, software, macIcs
+        );
 
         if (pendingTaskJson != null && !pendingTaskJson.isEmpty() && "idle".equals(currentTask)) {
             try {
@@ -132,29 +148,7 @@ public class AgentService extends Service {
     }
 
     private String readAnydeskId() {
-        String cmd =
-                "for base in " +
-                        "  /data_mirror/data_de/null/0/com.anydesk.anydeskandroid " +
-                        "  /data_mirror/data_ce/null/0/com.anydesk.anydeskandroid " +
-                        "  /data/user_de/0/com.anydesk.anydeskandroid " +
-                        "  /data/user/0/com.anydesk.anydeskandroid " +
-                        "  /data/data/com.anydesk.anydeskandroid; do " +
-                        "  for f in \"$base/files/.anydesk/system.conf\" \"$base/files/.anydesk/service.conf\" \"$base/files/system.conf\"; do " +
-                        "    if [ -f \"$f\" ]; then " +
-                        "      id=$(grep 'ad.anynet.id=' \"$f\" 2>/dev/null | head -n 1 | cut -d'=' -f2); " +
-                        "      if [ -n \"$id\" ]; then echo \"$id\"; exit 0; fi; " +
-                        "    fi; " +
-                        "  done; " +
-                        "done 2>/dev/null";
-        try {
-            Process process = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line = reader.readLine();
-            process.waitFor(5, TimeUnit.SECONDS);
-            return (line != null) ? line.trim() : "";
-        } catch (Exception e) {
-            return "";
-        }
+        return DeviceInfo.getAnydeskId();
     }
 
     private void createNotificationChannel() {

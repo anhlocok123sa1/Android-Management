@@ -32,6 +32,12 @@ public class WebhookClient {
      */
     public String heartbeat(String mac, String anydeskId, long ramMb, long storageMb,
                             String currentTask, String appVersion, String ip) {
+        return heartbeat(mac, anydeskId, ramMb, storageMb, currentTask, appVersion, ip, "", "");
+    }
+
+    public String heartbeat(String mac, String anydeskId, long ramMb, long storageMb,
+                            String currentTask, String appVersion, String ip,
+                            String software, String macIcs) {
         try {
             JSONObject payload = new JSONObject();
             payload.put("action", "heartbeat");
@@ -42,6 +48,12 @@ public class WebhookClient {
             payload.put("current_task", currentTask);
             payload.put("app_version", appVersion);
             payload.put("ip", ip);
+            if (software != null && !software.isEmpty()) {
+                payload.put("software", software);
+            }
+            if (macIcs != null && !macIcs.isEmpty()) {
+                payload.put("mac_ics", macIcs);
+            }
 
             String responseBody = post(payload.toString());
             if (responseBody == null) return null;
@@ -55,6 +67,119 @@ public class WebhookClient {
             Log.e(Constants.TAG, "heartbeat error: " + e.getMessage(), e);
             return null;
         }
+    }
+
+    public static class SyncBoxResult {
+        public boolean success;
+        public boolean matchedByAnydesk;
+        public String project;
+        public String software;
+        public String message;
+    }
+
+    /**
+     * Tự động tìm mã AnyDesk của Box cũ trên Google Sheet theo từng dự án,
+     * đồng bộ MAC thật, phần mềm đang sử dụng (Radio 3.6 / 1.66 / 2.0 / VNPT ICS) và trạng thái Online.
+     */
+    public SyncBoxResult syncOldBoxByAnydesk(String mac, String anydeskId, String detectedSoftware,
+                                             String macIcs, String appVersion, long storageMb,
+                                             long ramMb, String ip) {
+        SyncBoxResult res = new SyncBoxResult();
+        res.project = "Kho thiết bị";
+        res.software = (detectedSoftware != null && !detectedSoftware.isEmpty()) ? detectedSoftware : "Radio 3.6";
+        String cleanAd = anydeskId != null ? anydeskId.replaceAll("[\\s\\-]", "").trim() : "";
+
+        try {
+            // Bước 1: Yêu cầu Sheet đồng bộ (quét các Sheet dự án mới tạo nếu có) và tải danh sách thiết bị
+            try {
+                JSONObject syncReq = new JSONObject();
+                syncReq.put("action", "sync_project_sheets");
+                post(syncReq.toString());
+            } catch (Exception ignored) {}
+
+            String matchedProject = "";
+            String existingIot = "";
+            String existingImei = "";
+            String existingNotes = "";
+            boolean foundOnSheet = false;
+
+            String devRespStr = getDevices();
+            if (devRespStr != null && !devRespStr.isEmpty()) {
+                JSONObject devResp = new JSONObject(devRespStr);
+                JSONArray arr = devResp.optJSONArray("devices");
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject d = arr.getJSONObject(i);
+                        String rowAd = d.optString("anydesk_id", "").replaceAll("[\\s\\-]", "").trim();
+                        String rowMac = d.optString("mac", "").trim().toUpperCase();
+                        String rowProj = d.optString("project", "").trim();
+
+                        if ((!cleanAd.isEmpty() && (cleanAd.equals(rowAd) || rowMac.equals("CHUA_MAC_" + cleanAd)))
+                                || (!mac.isEmpty() && mac.equalsIgnoreCase(rowMac))) {
+                            foundOnSheet = true;
+                            if (!rowProj.isEmpty() && (!"Kho thiết bị".equals(rowProj) || matchedProject.isEmpty())) {
+                                matchedProject = rowProj;
+                            }
+                            if (existingIot.isEmpty()) existingIot = d.optString("iot_id", "");
+                            if (existingImei.isEmpty()) existingImei = d.optString("imei_sim", "");
+                            if (existingNotes.isEmpty()) existingNotes = d.optString("notes", "");
+                        }
+                    }
+                }
+            }
+
+            if (!matchedProject.isEmpty()) {
+                res.project = matchedProject;
+                res.matchedByAnydesk = true;
+            }
+
+            // Bước 2: Gọi register_device kèm đầy đủ thông tin dự án, phần mềm đang dùng, MAC thật
+            JSONObject regPayload = new JSONObject();
+            regPayload.put("action", "register_device");
+            regPayload.put("mac", mac);
+            regPayload.put("anydesk_id", cleanAd);
+            regPayload.put("project", res.project);
+            regPayload.put("software", res.software);
+            regPayload.put("status", "online");
+            regPayload.put("app_version", appVersion);
+            regPayload.put("storage_mb", storageMb);
+            if (macIcs != null && !macIcs.isEmpty()) regPayload.put("mac_ics", macIcs);
+            if (!existingIot.isEmpty()) regPayload.put("iot_id", existingIot);
+            if (!existingImei.isEmpty()) regPayload.put("imei_sim", existingImei);
+            if (!existingNotes.isEmpty()) regPayload.put("notes", existingNotes);
+
+            String regRespStr = post(regPayload.toString());
+            if (regRespStr != null) {
+                JSONObject regResp = new JSONObject(regRespStr);
+                String serverProj = regResp.optString("project", "");
+                if (!serverProj.isEmpty() && !"Kho thiết bị".equals(serverProj)) {
+                    res.project = serverProj;
+                    res.matchedByAnydesk = true;
+                }
+            }
+
+            // Bước 3: Gửi heartbeat để cập nhật trạng thái ONLINE + last_seen + bảng Heartbeat
+            heartbeat(mac, cleanAd, ramMb, storageMb, "idle", appVersion, ip, res.software, macIcs);
+
+            // Bước 4: Gọi assign_project để ép cập nhật project + software và tách Sheet dự án tự động
+            JSONObject assignPayload = new JSONObject();
+            assignPayload.put("action", "assign_project");
+            JSONArray macsArr = new JSONArray();
+            macsArr.put(mac);
+            assignPayload.put("target_macs", macsArr);
+            assignPayload.put("project", res.project);
+            assignPayload.put("software", res.software);
+            post(assignPayload.toString());
+
+            res.success = true;
+            res.matchedByAnydesk = foundOnSheet || res.matchedByAnydesk;
+            res.message = "Đã đồng bộ thành công lên dự án: " + res.project;
+        } catch (Exception e) {
+            res.success = false;
+            res.message = "Lỗi đồng bộ: " + e.getMessage();
+            Log.e(Constants.TAG, "syncOldBoxByAnydesk error: " + e.getMessage(), e);
+        }
+        return res;
     }
 
     /**

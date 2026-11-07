@@ -206,6 +206,310 @@ function upsertRow(sheet, keyCol, keyValue, dataObj) {
 }
 
 /**
+ * Chuẩn hóa mã AnyDesk (loại bỏ dấu cách, gạch ngang).
+ */
+function normalizeAnydeskId(val) {
+  if (val === null || val === undefined) return "";
+  return String(val).replace(/[\s\-]/g, "").trim();
+}
+
+/**
+ * Quét tất cả các Sheet dự án do người dùng tự tạo (copy/paste danh sách mã AnyDesk vào Sheet mới)
+ * và tự động đồng bộ ngược vào bảng Devices tổng (gắn đúng tên Sheet làm tên Dự án).
+ */
+function ingestProjectSheetsToMaster() {
+  var ss = getSpreadsheet();
+  var devicesSheet = getSheet("Devices");
+  var requiredCols = [
+    "mac", "anydesk_id", "project", "software", "mac_ics",
+    "status", "last_seen", "app_version", "storage_mb", "task_id",
+    "iot_id", "imei_sim", "notes"
+  ];
+  var headers = ensureHeaders(devicesSheet, requiredCols);
+  var macIdx = headers.indexOf("mac");
+  var adIdx = headers.indexOf("anydesk_id");
+  var projIdx = headers.indexOf("project");
+
+  var lastDevRow = devicesSheet.getLastRow();
+  var devValues = lastDevRow > 1 ? devicesSheet.getRange(2, 1, lastDevRow - 1, headers.length).getValues() : [];
+
+  // Map anydesk_id -> row index in Devices (0-based in devValues)
+  var adToRowIdx = {};
+  for (var d = 0; d < devValues.length; d++) {
+    var existingAd = normalizeAnydeskId(devValues[d][adIdx]);
+    if (existingAd) {
+      adToRowIdx[existingAd] = d;
+    }
+  }
+
+  var systemSheets = {
+    "devices": true,
+    "tasks": true,
+    "templates": true,
+    "heartbeat": true,
+    "final - tất cả dự án": true,
+    "config_radio20": true,
+    "android mới": true,
+    "radio 3.6": true,
+    "radio 1.66": true,
+    "ics": true,
+    "sheet1": true,
+    "trang tính 1": true
+  };
+
+  var allSheets = ss.getSheets();
+  var newRowsToAppend = [];
+
+  for (var s = 0; s < allSheets.length; s++) {
+    var sheet = allSheets[s];
+    var sheetName = String(sheet.getName() || "").trim();
+    if (!sheetName || systemSheets[sheetName.toLowerCase()]) continue;
+
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow === 0 || lastCol === 0) continue;
+
+    var data = sheet.getRange(1, 1, lastRow, Math.min(lastCol, 15)).getValues();
+    var adCol = -1;
+    var iotCol = -1;
+    var macCol = -1;
+    var softCol = -1;
+    var noteCol = -1;
+    var startRow = 0;
+
+    // Kiểm tra xem dòng 1 có phải dòng tiêu đề không
+    var row0Str = data[0].join(" ").toLowerCase();
+    if (row0Str.indexOf("anydesk") !== -1 || row0Str.indexOf("stt") !== -1 || row0Str.indexOf("mac") !== -1) {
+      startRow = 1;
+      for (var c = 0; c < data[0].length; c++) {
+        var h = String(data[0][c] || "").trim().toLowerCase();
+        if (h.indexOf("anydesk") !== -1) adCol = c;
+        else if (h.indexOf("iot") !== -1) iotCol = c;
+        else if (h.indexOf("mac android") !== -1 || h === "mac") macCol = c;
+        else if (h.indexOf("phần mềm") !== -1 || h === "software") softCol = c;
+        else if (h.indexOf("ghi chú") !== -1 || h === "notes") noteCol = c;
+      }
+    }
+
+    for (var r = startRow; r < data.length; r++) {
+      var row = data[r];
+      var foundAd = "";
+      if (adCol !== -1) {
+        var candidate = normalizeAnydeskId(row[adCol]);
+        if (/^\d{8,11}$/.test(candidate)) foundAd = candidate;
+      } else {
+        // Người dùng vừa tạo Sheet mới và paste thẳng cột mã AnyDesk vào cột A, B hoặc C
+        for (var colScan = 0; colScan < Math.min(row.length, 4); colScan++) {
+          var cand = normalizeAnydeskId(row[colScan]);
+          if (/^\d{8,11}$/.test(cand)) {
+            foundAd = cand;
+            break;
+          }
+        }
+      }
+
+      if (!foundAd) continue;
+
+      if (adToRowIdx[foundAd] !== undefined) {
+        // Đã có trên bảng Devices -> nếu đang ở "Kho thiết bị" hoặc rỗng thì cập nhật sang tên Sheet dự án mới
+        var idx = adToRowIdx[foundAd];
+        var curProj = String(devValues[idx][projIdx] || "").trim();
+        if (!curProj || curProj === "Kho thiết bị") {
+          devValues[idx][projIdx] = sheetName;
+          devicesSheet.getRange(idx + 2, projIdx + 1).setValue(sheetName);
+        }
+      } else {
+        // Chưa có trên bảng Devices -> thêm mới với project = tên Sheet
+        var rowMac = (macCol !== -1 && row[macCol]) ? String(row[macCol]).trim().replace(/[:\-]/g, "").toUpperCase() : "";
+        if (!rowMac) rowMac = "CHUA_MAC_" + foundAd;
+        var rowSoft = (softCol !== -1 && row[softCol]) ? String(row[softCol]).trim() : "Chưa đồng bộ";
+        var rowIot = (iotCol !== -1 && row[iotCol]) ? String(row[iotCol]).trim() : "";
+        var rowNote = (noteCol !== -1 && row[noteCol]) ? String(row[noteCol]).trim() : "";
+
+        var newRowArr = [];
+        var newObj = {
+          mac: rowMac,
+          anydesk_id: foundAd,
+          project: sheetName,
+          software: rowSoft,
+          mac_ics: "",
+          status: "offline",
+          last_seen: "",
+          app_version: "",
+          storage_mb: "",
+          task_id: "",
+          iot_id: rowIot,
+          imei_sim: "",
+          notes: rowNote
+        };
+        for (var hc = 0; hc < headers.length; hc++) {
+          var key = headers[hc].toLowerCase();
+          newRowArr.push(newObj[key] !== undefined ? newObj[key] : "");
+        }
+        newRowsToAppend.push(newRowArr);
+        adToRowIdx[foundAd] = devValues.length + newRowsToAppend.length - 1;
+      }
+    }
+  }
+
+  if (newRowsToAppend.length > 0) {
+    var appendStart = devicesSheet.getLastRow() + 1;
+    devicesSheet.getRange(appendStart, 1, newRowsToAppend.length, headers.length).setValues(newRowsToAppend);
+  }
+}
+
+/**
+ * Tìm và cập nhật thiết bị trong bảng Devices theo cả MAC lẫn AnyDesk ID.
+ * Nếu Box cũ đã có mã AnyDesk trong một Sheet dự án (với mã tạm CHUA_MAC_<anydesk>),
+ * hàm này sẽ tự động khớp mã AnyDesk đó, giữ nguyên Dự án của Sheet, điền MAC thật,
+ * phần mềm đang sử dụng và trạng thái Online!
+ */
+function upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, dataObj) {
+  var requiredCols = [
+    "mac", "anydesk_id", "project", "software", "mac_ics",
+    "status", "last_seen", "app_version", "storage_mb", "task_id",
+    "iot_id", "imei_sim", "notes"
+  ];
+  var headers = ensureHeaders(devicesSheet, requiredCols);
+  var macColIdx = headers.indexOf("mac");
+  var adColIdx = headers.indexOf("anydesk_id");
+  var projColIdx = headers.indexOf("project");
+  var softColIdx = headers.indexOf("software");
+
+  var cleanMac = String(mac || "").trim().replace(/[:\-]/g, "").toUpperCase();
+  var cleanAd = normalizeAnydeskId(anydeskId);
+
+  var lastRow = devicesSheet.getLastRow();
+  var macRowIdx = -1;     // 1-based row on sheet
+  var adRowIdx = -1;      // 1-based row on sheet
+  var macRowData = null;
+  var adRowData = null;
+
+  if (lastRow > 1) {
+    var values = devicesSheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+    for (var i = 0; i < values.length; i++) {
+      var rMac = String(values[i][macColIdx] || "").trim().replace(/[:\-]/g, "").toUpperCase();
+      var rAd = normalizeAnydeskId(values[i][adColIdx]);
+
+      if (cleanMac && rMac === cleanMac) {
+        macRowIdx = i + 2;
+        macRowData = values[i];
+      }
+      if (cleanAd && (rAd === cleanAd || rMac === ("CHUA_MAC_" + cleanAd))) {
+        adRowIdx = i + 2;
+        adRowData = values[i];
+      }
+    }
+  }
+
+  var targetRowIdx = -1;
+  var existingRowData = null;
+  var matchedByAnydesk = false;
+
+  if (macRowIdx > 0 && adRowIdx > 0 && macRowIdx !== adRowIdx) {
+    // Có cả dòng MAC cũ và dòng chờ CHUA_MAC_<anydesk> trên Sheet dự án mới -> Gộp dự án từ dòng AnyDesk sang
+    var adProj = String(adRowData[projColIdx] || "").trim();
+    var macProj = String(macRowData[projColIdx] || "").trim();
+    if (adProj && adProj !== "Kho thiết bị") {
+      macRowData[projColIdx] = adProj;
+    }
+    // Giữ lại thông tin iot_id, imei_sim, notes nếu dòng AnyDesk có
+    for (var c = 0; c < headers.length; c++) {
+      if (!macRowData[c] && adRowData[c]) {
+        macRowData[c] = adRowData[c];
+      }
+    }
+    targetRowIdx = macRowIdx;
+    existingRowData = macRowData;
+    matchedByAnydesk = true;
+    // Xóa dòng CHUA_MAC_ dư thừa
+    devicesSheet.deleteRow(adRowIdx);
+    if (adRowIdx < targetRowIdx) {
+      targetRowIdx--;
+    }
+  } else if (adRowIdx > 0) {
+    // Khớp theo mã AnyDesk trên Sheet dự án (hoặc CHUA_MAC_<anydesk>)!
+    targetRowIdx = adRowIdx;
+    existingRowData = adRowData;
+    var oldMacVal = String(existingRowData[macColIdx] || "").trim().toUpperCase();
+    if (oldMacVal.indexOf("CHUA_MAC_") === 0 || oldMacVal !== cleanMac) {
+      matchedByAnydesk = true;
+    }
+  } else if (macRowIdx > 0) {
+    targetRowIdx = macRowIdx;
+    existingRowData = macRowData;
+  }
+
+  if (targetRowIdx > 0 && existingRowData) {
+    var updatedRow = [];
+    for (var j = 0; j < headers.length; j++) {
+      var colHeader = headers[j].toLowerCase();
+      var existingVal = existingRowData[j];
+      var incomingVal = dataObj[colHeader];
+
+      if (colHeader === "mac" && cleanMac) {
+        updatedRow.push(cleanMac);
+      } else if (colHeader === "anydesk_id" && cleanAd) {
+        updatedRow.push(cleanAd);
+      } else if (colHeader === "project") {
+        // Giữ nguyên dự án đã gắn trên Sheet nếu dataObj không truyền dự án cụ thể
+        var curProjVal = String(existingVal || "").trim();
+        if (incomingVal && incomingVal !== "Kho thiết bị") {
+          updatedRow.push(incomingVal);
+        } else if (curProjVal) {
+          updatedRow.push(curProjVal);
+        } else {
+          updatedRow.push("Kho thiết bị");
+        }
+      } else if (colHeader === "software") {
+        var curSoftVal = String(existingVal || "").trim();
+        if (incomingVal && incomingVal !== "Chưa đồng bộ") {
+          updatedRow.push(incomingVal);
+        } else if (curSoftVal && curSoftVal !== "Chưa đồng bộ") {
+          updatedRow.push(curSoftVal);
+        } else {
+          updatedRow.push(incomingVal || curSoftVal || "Radio 3.6");
+        }
+      } else if (incomingVal !== undefined && incomingVal !== "") {
+        updatedRow.push(incomingVal);
+      } else {
+        updatedRow.push(existingVal);
+      }
+    }
+    devicesSheet.getRange(targetRowIdx, 1, 1, headers.length).setValues([updatedRow]);
+    return {
+      row: targetRowIdx,
+      isNew: false,
+      matchedByAnydesk: matchedByAnydesk,
+      project: String(updatedRow[projColIdx] || "Kho thiết bị"),
+      software: String(updatedRow[softColIdx] || "")
+    };
+  } else {
+    // Thiết bị hoàn toàn mới chưa có trong bất kỳ Sheet dự án nào
+    var newRow = [];
+    var defaultProj = dataObj.project || "Kho thiết bị";
+    var defaultSoft = dataObj.software || "Radio 3.6";
+    for (var col = 0; col < headers.length; col++) {
+      var hName = headers[col].toLowerCase();
+      if (hName === "mac") newRow.push(cleanMac);
+      else if (hName === "anydesk_id") newRow.push(cleanAd);
+      else if (hName === "project") newRow.push(defaultProj);
+      else if (hName === "software") newRow.push(defaultSoft);
+      else if (dataObj[hName] !== undefined) newRow.push(dataObj[hName]);
+      else newRow.push("");
+    }
+    devicesSheet.appendRow(newRow);
+    return {
+      row: devicesSheet.getLastRow(),
+      isNew: true,
+      matchedByAnydesk: false,
+      project: defaultProj,
+      software: defaultSoft
+    };
+  }
+}
+
+/**
  * Đọc toàn bộ các row dữ liệu của sheet thành mảng Object (key theo tên header).
  */
 function getSheetRowsAsObjects(sheet) {
@@ -368,6 +672,13 @@ function handleHeartbeat(params) {
     var tasksSheet = getSheet("Tasks");
     var templatesSheet = getSheet("Templates");
 
+    // 0. Tự động quét các Sheet dự án mới tạo (nơi người dùng vừa paste danh sách mã AnyDesk)
+    try {
+      ingestProjectSheetsToMaster();
+    } catch (ingErr) {
+      Logger.log("ingestProjectSheetsToMaster error in heartbeat: " + ingErr.message);
+    }
+
     // 1. Upsert vào sheet Heartbeat
     upsertRow(heartbeatSheet, "mac", mac, {
       mac: mac,
@@ -379,7 +690,8 @@ function handleHeartbeat(params) {
       ip: params.ip !== undefined ? params.ip : ""
     });
 
-    // 2. Upsert vào sheet Devices (cập nhật last_seen, app_version, storage_mb, anydesk_id nếu khác)
+    // 2. Upsert vào sheet Devices (khớp theo cả MAC lẫn AnyDesk ID trên các Sheet dự án)
+    var anydeskId = params.anydesk_id !== undefined ? normalizeAnydeskId(params.anydesk_id) : "";
     var deviceData = {
       mac: mac,
       last_seen: nowIso,
@@ -392,14 +704,27 @@ function handleHeartbeat(params) {
     if (params.storage_mb !== undefined && String(params.storage_mb).trim() !== "") {
       deviceData.storage_mb = params.storage_mb;
     }
-    if (params.anydesk_id !== undefined && String(params.anydesk_id).trim() !== "") {
-      deviceData.anydesk_id = params.anydesk_id;
+    if (anydeskId !== "") {
+      deviceData.anydesk_id = anydeskId;
+    }
+    if (params.software !== undefined && String(params.software).trim() !== "") {
+      deviceData.software = String(params.software).trim();
+    }
+    if (params.mac_ics !== undefined && String(params.mac_ics).trim() !== "") {
+      deviceData.mac_ics = String(params.mac_ics).trim();
     }
     if (params.current_task !== undefined) {
       deviceData.task_id = params.current_task;
     }
 
-    upsertRow(devicesSheet, "mac", mac, deviceData);
+    var upsertRes = upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, deviceData);
+    if (upsertRes.matchedByAnydesk || deviceData.software || deviceData.mac_ics) {
+      try {
+        syncProjectSheets();
+      } catch (syncErr) {
+        Logger.log("syncProjectSheets error in heartbeat: " + syncErr.message);
+      }
+    }
 
     // 3. Tìm task pending cho mac này: WHERE target_mac=mac AND status='pending' ORDER BY created_at ASC LIMIT 1
     var allTasks = getSheetRowsAsObjects(tasksSheet);
@@ -440,6 +765,9 @@ function handleHeartbeat(params) {
 
     return {
       status: "ok",
+      project: upsertRes.project,
+      software: upsertRes.software,
+      matched_by_anydesk: upsertRes.matchedByAnydesk,
       pending_task: pendingTaskResult
     };
   } finally {
@@ -637,7 +965,7 @@ function handleCompleteTask(params) {
  */
 function handleRegisterDevice(params) {
   var mac = params.mac ? String(params.mac).trim() : "";
-  var anydeskId = params.anydesk_id ? String(params.anydesk_id).trim() : "";
+  var anydeskId = params.anydesk_id ? normalizeAnydeskId(params.anydesk_id) : "";
 
   if (!mac) {
     return errorResponse("Thiếu tham số bắt buộc: mac");
@@ -651,73 +979,45 @@ function handleRegisterDevice(params) {
   }
 
   try {
-    var devicesSheet = getSheet("Devices");
-    ensureHeaders(devicesSheet, ["mac", "anydesk_id", "project", "software", "mac_ics", "status", "last_seen", "app_version", "storage_mb", "task_id", "iot_id", "imei_sim", "notes"]);
-    var headers = getSheetHeaders(devicesSheet);
-    var macColIdx = headers.indexOf("mac");
-    var anydeskColIdx = headers.indexOf("anydesk_id");
-    var lastSeenColIdx = headers.indexOf("last_seen");
-
-    var lastRow = devicesSheet.getLastRow();
-    var existingRowIdx = -1;
-
-    if (lastRow > 1) {
-      var values = devicesSheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
-      for (var i = 0; i < values.length; i++) {
-        if (String(values[i][macColIdx]).trim().toLowerCase() === mac.toLowerCase()) {
-          existingRowIdx = i + 2;
-          break;
-        }
-      }
+    // 0. Quét các Sheet dự án mới tạo (nơi người dùng vừa paste danh sách mã AnyDesk)
+    try {
+      ingestProjectSheetsToMaster();
+    } catch (ingErr) {
+      Logger.log("ingestProjectSheetsToMaster error in register_device: " + ingErr.message);
     }
 
-    var isNew = false;
+    var devicesSheet = getSheet("Devices");
     var nowIso = new Date().toISOString();
 
-    if (existingRowIdx > 0) {
-      // Đã có -> Cập nhật anydesk_id nếu có truyền vào
-      if (anydeskColIdx !== -1 && anydeskId) {
-        devicesSheet.getRange(existingRowIdx, anydeskColIdx + 1).setValue(anydeskId);
-      }
-      if (lastSeenColIdx !== -1) {
-        devicesSheet.getRange(existingRowIdx, lastSeenColIdx + 1).setValue(nowIso);
-      }
-      if (params.project) {
-        var projColIdx = headers.indexOf("project");
-        if (projColIdx !== -1) devicesSheet.getRange(existingRowIdx, projColIdx + 1).setValue(params.project);
-      }
-      if (params.software) {
-        var softColIdx = headers.indexOf("software");
-        if (softColIdx !== -1) devicesSheet.getRange(existingRowIdx, softColIdx + 1).setValue(params.software);
-      }
-      if (params.mac_ics) {
-        var icsColIdx = headers.indexOf("mac_ics");
-        if (icsColIdx !== -1) devicesSheet.getRange(existingRowIdx, icsColIdx + 1).setValue(params.mac_ics);
-      }
-      isNew = false;
-    } else {
-      // Chưa có -> insert row mới với status='new'
-      upsertRow(devicesSheet, "mac", mac, {
-        mac: mac,
-        anydesk_id: anydeskId,
-        project: params.project || "Kho thiết bị",
-        software: params.software || "Radio 3.6 (Test)",
-        mac_ics: params.mac_ics || "",
-        iot_id: params.iot_id || "",
-        imei_sim: params.imei_sim || "",
-        status: "new",
-        last_seen: nowIso,
-        app_version: params.app_version || "",
-        storage_mb: params.storage_mb || "",
-        task_id: "",
-        notes: params.notes || ""
-      });
-      isNew = true;
+    var deviceData = {
+      mac: mac,
+      anydesk_id: anydeskId,
+      status: params.status || "online",
+      last_seen: nowIso
+    };
+    if (params.project) deviceData.project = String(params.project).trim();
+    if (params.software) deviceData.software = String(params.software).trim();
+    if (params.mac_ics) deviceData.mac_ics = String(params.mac_ics).trim();
+    if (params.iot_id) deviceData.iot_id = String(params.iot_id).trim();
+    if (params.imei_sim) deviceData.imei_sim = String(params.imei_sim).trim();
+    if (params.app_version) deviceData.app_version = String(params.app_version).trim();
+    if (params.storage_mb) deviceData.storage_mb = String(params.storage_mb).trim();
+    if (params.notes) deviceData.notes = String(params.notes).trim();
+
+    var upsertRes = upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, deviceData);
+
+    try {
+      syncProjectSheets();
+    } catch (syncErr) {
+      Logger.log("syncProjectSheets error in register_device: " + syncErr.message);
     }
 
     return {
       status: "ok",
-      is_new: isNew
+      is_new: upsertRes.isNew,
+      matched_by_anydesk: upsertRes.matchedByAnydesk,
+      project: upsertRes.project,
+      software: upsertRes.software
     };
   } finally {
     lock.releaseLock();
@@ -1288,6 +1588,14 @@ function syncProjectSheets() {
     "status", "last_seen", "app_version", "storage_mb", "task_id", 
     "iot_id", "imei_sim", "notes"
   ]);
+
+  // 0. Trước khi xóa/vẽ lại các Sheet dự án, tự động quét xem người dùng có vừa tạo Sheet dự án mới
+  // và paste danh sách mã AnyDesk vào đó không để gom về bảng Devices tổng trước.
+  try {
+    ingestProjectSheetsToMaster();
+  } catch (ingErr) {
+    Logger.log("ingestProjectSheetsToMaster error in syncProjectSheets: " + ingErr.message);
+  }
 
   // Xóa các tab cũ thời điểm đầu không còn phù hợp (do nhầm lẫn phần mềm với tên dự án)
   var legacySheets = ["Android Mới", "Radio 3.6", "Radio 1.66", "ICS"];
