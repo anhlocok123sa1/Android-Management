@@ -8,8 +8,75 @@
 </head>
 <body>
 
+  <!-- =================================================================== -->
+  <!-- LOGIN GATE OVERLAY (BẢO MẬT ĐĂNG NHẬP HỆ THỐNG)                     -->
+  <!-- =================================================================== -->
+  <div id="loginGate" class="login-gate">
+    <div class="login-card" id="loginCard">
+      <div class="login-header">
+        <div class="login-logo">SGL</div>
+        <div class="login-title">SGL SMART BROADCAST CLOUD</div>
+        <div class="login-subtitle">🔒 Cổng Xác Thực Quản Trị Thiết Bị Truyền Thanh</div>
+      </div>
+
+      <form id="loginForm" onsubmit="handleLoginSubmit(event)" autocomplete="on">
+        <div class="form-row">
+          <label for="loginUsername">👤 Tài khoản quản trị</label>
+          <input
+            type="text"
+            id="loginUsername"
+            class="input-control"
+            placeholder="Nhập tài khoản (admin)"
+            autocomplete="username"
+            required
+          />
+        </div>
+
+        <div class="form-row">
+          <label for="loginPassword">🔑 Mật khẩu bảo mật</label>
+          <div class="password-wrapper">
+            <input
+              type="password"
+              id="loginPassword"
+              class="input-control"
+              placeholder="Nhập mật khẩu bảo mật..."
+              autocomplete="current-password"
+              required
+            />
+            <button
+              type="button"
+              class="btn-eye"
+              id="btnTogglePass"
+              onclick="togglePasswordVisibility()"
+              title="Hiện / Ẩn mật khẩu"
+            >
+              👁
+            </button>
+          </div>
+        </div>
+
+        <div class="login-remember-row">
+          <label class="remember-label">
+            <input type="checkbox" id="loginRemember" checked />
+            <span>Ghi nhớ đăng nhập trên thiết bị này (7 ngày)</span>
+          </label>
+        </div>
+
+        <div id="loginErrorBox" class="login-error" style="display:none;"></div>
+
+        <button type="submit" id="btnLoginSubmit" class="btn btn-primary login-btn">
+          🔐 ĐĂNG NHẬP HỆ THỐNG
+        </button>
+      </form>
+
+      <div class="login-footer">
+        Bảo mật xác thực băm mật mã SHA-256 &bull; SGL Smart Broadcast System
+      </div>
+    </div>
+  </div>
+
   <!-- TOP NAVIGATION BAR -->
-  <header class="topbar">
+  <header class="topbar" id="appTopbar" style="display:none;">
     <div class="brand">
       <div class="brand-logo">SGL</div>
       <div>
@@ -44,11 +111,14 @@
       <a id="btnOpenSheetTop" href="https://docs.google.com/spreadsheets/d/1-7ZrYTDnoL68BNB7D9QQWxhDGcGNXW3VVfdedAtejAg/edit" target="_blank" class="btn btn-cyan btn-sm" style="text-decoration:none;">
         📊 Mở Google Sheet
       </a>
+      <button class="btn btn-danger btn-sm" onclick="handleLogout()" title="Đăng xuất khỏi phiên làm việc">
+        🚪 Đăng xuất
+      </button>
     </div>
   </header>
 
   <!-- MAIN CONTENT -->
-  <main class="main-container">
+  <main class="main-container" id="appMain" style="display:none;">
 
     <!-- =================================================================== -->
     <!-- TAB 1: DASHBOARD THỰC ĐỊA                                           -->
