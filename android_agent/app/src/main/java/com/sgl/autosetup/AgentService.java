@@ -78,7 +78,9 @@ public class AgentService extends Service {
             }
 
             try {
-                Thread.sleep(Constants.POLL_INTERVAL_MS);
+                // Thêm độ lệch ngẫu nhiên (Jitter 0 - 45 giây) để hàng nghìn Box không gửi cùng 1 giây khi có điện lại
+                long jitterMs = (long) (Math.random() * 45000L);
+                Thread.sleep(Constants.POLL_INTERVAL_MS + jitterMs);
             } catch (InterruptedException e) {
                 Log.i(Constants.TAG, "Polling loop interrupted.");
                 break;
@@ -95,17 +97,6 @@ public class AgentService extends Service {
         String ip = DeviceInfo.getIpAddress();
         String software = DeviceInfo.detectInstalledSoftware(this);
         String macIcs = "VNPT ICS".equals(software) ? DeviceInfo.extractIcsMacIfPresent() : "";
-
-        // Lần đầu tiên Service chạy: tự động tìm mã AnyDesk trên các Sheet dự án và đồng bộ app đang dùng + trạng thái Online
-        if (!initialSyncDone && !mac.isEmpty() && !"UNKNOWN".equals(mac)) {
-            initialSyncDone = true;
-            WebhookClient.SyncBoxResult syncRes = webhookClient.syncOldBoxByAnydesk(
-                    mac, anydeskId, software, macIcs, appVersion, storageMb, ramMb, ip
-            );
-            if (syncRes != null && syncRes.success) {
-                updateNotification("Đã đồng bộ Dự án: " + syncRes.project + " (" + syncRes.software + ")");
-            }
-        }
 
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String currentTask = prefs.getString(KEY_CURRENT_TASK, "idle");

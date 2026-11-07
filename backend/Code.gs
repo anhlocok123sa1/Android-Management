@@ -647,132 +647,350 @@ function routeAction(action, params) {
 // BUSINESS LOGIC HANDLERS
 // ==============================================================================
 
+// ==============================================================================
+// HIGH-THROUGHPUT CACHE & BATCH FLUSH ENGINE (CHỊU TẢI 2.000+ BOX)
+// ==============================================================================
+
+var PENDING_TASKS_CACHE_KEY = "sgl_pending_tasks_map_v1";
+var LAST_FLUSH_TS_KEY = "sgl_last_sheet_flush_ts_v1";
+var NEW_HB_MACS_KEY = "sgl_new_hb_macs_v1";
+var FLUSH_INTERVAL_MS = 60 * 1000; // Ghi gộp xuống Sheet tối đa 1 lần / 60 giây
+
 /**
- * POST action=heartbeat
- * Android Agent gửi xung nhịp định kỳ 5 phút/lần.
- * Cập nhật Heartbeat + Devices và kiểm tra task pending.
+ * Xóa cache nhiệm vụ đang chờ khi có thay đổi (create_task, claim_task, complete_task, save_template).
  */
-function handleHeartbeat(params) {
-  var mac = params.mac ? String(params.mac).trim() : "";
-  if (!mac) {
-    return errorResponse("Thiếu tham số bắt buộc: mac");
-  }
-
-  var lock = LockService.getScriptLock();
+function invalidatePendingTasksCache() {
   try {
-    lock.waitLock(15000);
-  } catch (e) {
-    return errorResponse("Hệ thống đang bận xử lý request khác, vui lòng thử lại sau giây lát.");
-  }
+    CacheService.getScriptCache().remove(PENDING_TASKS_CACHE_KEY);
+  } catch (e) {}
+}
+
+/**
+ * Đọc nhiệm vụ đang chờ của 1 MAC từ bộ nhớ đệm RAM (chỉ mất ~2ms, không cần đọc Sheet).
+ * Nếu cache hết hạn (90 giây), tự động nạp lại từ bảng Tasks + Templates.
+ */
+function getPendingTaskFromCacheOrSheet(mac) {
+  if (!mac) return null;
+  var cleanMacLower = String(mac).trim().toLowerCase();
+  var cache = CacheService.getScriptCache();
 
   try {
-    var nowIso = new Date().toISOString();
-    var heartbeatSheet = getSheet("Heartbeat");
-    var devicesSheet = getSheet("Devices");
+    var cachedStr = cache.get(PENDING_TASKS_CACHE_KEY);
+    if (cachedStr) {
+      var taskMap = JSON.parse(cachedStr);
+      return taskMap[cleanMacLower] || null;
+    }
+  } catch (e) {}
+
+  // Cache miss -> Đọc từ Sheet Tasks + Templates 1 lần và lưu vào RAM 90 giây
+  try {
     var tasksSheet = getSheet("Tasks");
     var templatesSheet = getSheet("Templates");
+    var allTasks = getSheetRowsAsObjects(tasksSheet);
+    var allTemplates = getSheetRowsAsObjects(templatesSheet);
 
-    // 0. Tự động quét các Sheet dự án mới tạo (nơi người dùng vừa paste danh sách mã AnyDesk)
-    try {
-      ingestProjectSheetsToMaster();
-    } catch (ingErr) {
-      Logger.log("ingestProjectSheetsToMaster error in heartbeat: " + ingErr.message);
-    }
-
-    // 1. Upsert vào sheet Heartbeat
-    upsertRow(heartbeatSheet, "mac", mac, {
-      mac: mac,
-      timestamp: nowIso,
-      ram_mb: params.ram_mb !== undefined ? params.ram_mb : "",
-      storage_mb: params.storage_mb !== undefined ? params.storage_mb : "",
-      current_task: params.current_task !== undefined ? params.current_task : "",
-      app_version: params.app_version !== undefined ? params.app_version : "",
-      ip: params.ip !== undefined ? params.ip : ""
-    });
-
-    // 2. Upsert vào sheet Devices (khớp theo cả MAC lẫn AnyDesk ID trên các Sheet dự án)
-    var anydeskId = params.anydesk_id !== undefined ? normalizeAnydeskId(params.anydesk_id) : "";
-    var deviceData = {
-      mac: mac,
-      last_seen: nowIso,
-      status: "online"
-    };
-
-    if (params.app_version !== undefined && String(params.app_version).trim() !== "") {
-      deviceData.app_version = params.app_version;
-    }
-    if (params.storage_mb !== undefined && String(params.storage_mb).trim() !== "") {
-      deviceData.storage_mb = params.storage_mb;
-    }
-    if (anydeskId !== "") {
-      deviceData.anydesk_id = anydeskId;
-    }
-    if (params.software !== undefined && String(params.software).trim() !== "") {
-      deviceData.software = String(params.software).trim();
-    }
-    if (params.mac_ics !== undefined && String(params.mac_ics).trim() !== "") {
-      deviceData.mac_ics = String(params.mac_ics).trim();
-    }
-    if (params.current_task !== undefined) {
-      deviceData.task_id = params.current_task;
-    }
-
-    var upsertRes = upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, deviceData);
-    if (upsertRes.matchedByAnydesk || deviceData.software || deviceData.mac_ics) {
-      try {
-        syncProjectSheets();
-      } catch (syncErr) {
-        Logger.log("syncProjectSheets error in heartbeat: " + syncErr.message);
+    var tplMap = {};
+    for (var i = 0; i < allTemplates.length; i++) {
+      var tName = String(allTemplates[i].template_name || "").trim().toLowerCase();
+      if (tName) {
+        tplMap[tName] = allTemplates[i].steps_json || "[]";
       }
     }
 
-    // 3. Tìm task pending cho mac này: WHERE target_mac=mac AND status='pending' ORDER BY created_at ASC LIMIT 1
-    var allTasks = getSheetRowsAsObjects(tasksSheet);
-    var pendingTasks = allTasks.filter(function(t) {
-      var targetMac = String(t.target_mac || "").trim().toLowerCase();
-      var status = String(t.status || "").trim().toLowerCase();
-      return targetMac === mac.toLowerCase() && status === "pending";
-    });
-
     // Sắp xếp tăng dần theo created_at
+    var pendingTasks = allTasks.filter(function(t) {
+      return String(t.status || "").trim().toLowerCase() === "pending";
+    });
     pendingTasks.sort(function(a, b) {
       var tA = new Date(a.created_at).getTime() || 0;
       var tB = new Date(b.created_at).getTime() || 0;
       return tA - tB;
     });
 
-    var pendingTaskResult = null;
-    if (pendingTasks.length > 0) {
-      var candidate = pendingTasks[0];
-      var templateName = String(candidate.template_name || "").trim();
-      var stepsJson = "";
-
-      // Lấy steps_json từ sheet Templates
-      var allTemplates = getSheetRowsAsObjects(templatesSheet);
-      for (var i = 0; i < allTemplates.length; i++) {
-        if (String(allTemplates[i].template_name || "").trim().toLowerCase() === templateName.toLowerCase()) {
-          stepsJson = allTemplates[i].steps_json || "";
-          break;
-        }
+    var newMap = {};
+    for (var j = 0; j < pendingTasks.length; j++) {
+      var pt = pendingTasks[j];
+      var targetMac = String(pt.target_mac || "").trim().toLowerCase();
+      if (targetMac && !newMap[targetMac]) {
+        var tplName = String(pt.template_name || "").trim();
+        newMap[targetMac] = {
+          task_id: String(pt.task_id || ""),
+          template_name: tplName,
+          steps_json: tplMap[tplName.toLowerCase()] || "[]"
+        };
       }
-
-      pendingTaskResult = {
-        task_id: String(candidate.task_id || ""),
-        template_name: templateName,
-        steps_json: stepsJson
-      };
     }
 
-    return {
-      status: "ok",
-      project: upsertRes.project,
-      software: upsertRes.software,
-      matched_by_anydesk: upsertRes.matchedByAnydesk,
-      pending_task: pendingTaskResult
-    };
-  } finally {
-    lock.releaseLock();
+    try {
+      cache.put(PENDING_TASKS_CACHE_KEY, JSON.stringify(newMap), 90);
+    } catch (cachePutErr) {}
+
+    return newMap[cleanMacLower] || null;
+  } catch (err) {
+    return null;
   }
+}
+
+/**
+ * Helper đọc hàng loạt key từ CacheService (chia nhỏ mỗi mẻ 500 keys để vượt giới hạn getAll).
+ */
+function getCacheBatch(cache, keys) {
+  var result = {};
+  if (!keys || keys.length === 0) return result;
+  var CHUNK_SIZE = 500;
+  for (var i = 0; i < keys.length; i += CHUNK_SIZE) {
+    var chunk = keys.slice(i, i + CHUNK_SIZE);
+    try {
+      var part = cache.getAll(chunk);
+      if (part) {
+        for (var k in part) {
+          result[k] = part[k];
+        }
+      }
+    } catch (e) {}
+  }
+  return result;
+}
+
+/**
+ * Hàm Ghi Gộp Hàng Loạt (Batch Flush):
+ * Gom toàn bộ nhịp sống (Heartbeat) của hàng nghìn Box đang lưu trong RAM Cache
+ * và ghi xuống bảng Devices chỉ bằng 1 lệnh setValues() duy nhất!
+ */
+function flushCachedHeartbeatsToSheet() {
+  var cache = CacheService.getScriptCache();
+
+  // 1. Quét các Sheet dự án mới tạo (nếu có)
+  try {
+    ingestProjectSheetsToMaster();
+  } catch (e) {}
+
+  var devicesSheet = getSheet("Devices");
+  var requiredCols = [
+    "mac", "anydesk_id", "project", "software", "mac_ics",
+    "status", "last_seen", "app_version", "storage_mb", "task_id",
+    "iot_id", "imei_sim", "notes"
+  ];
+  var headers = ensureHeaders(devicesSheet, requiredCols);
+  var macIdx = headers.indexOf("mac");
+  var adIdx = headers.indexOf("anydesk_id");
+  var projIdx = headers.indexOf("project");
+  var softIdx = headers.indexOf("software");
+  var icsIdx = headers.indexOf("mac_ics");
+  var statusIdx = headers.indexOf("status");
+  var lastSeenIdx = headers.indexOf("last_seen");
+  var appVerIdx = headers.indexOf("app_version");
+  var storageIdx = headers.indexOf("storage_mb");
+  var taskIdx = headers.indexOf("task_id");
+
+  var lastRow = devicesSheet.getLastRow();
+  var values = lastRow > 1 ? devicesSheet.getRange(2, 1, lastRow - 1, headers.length).getValues() : [];
+
+  // Danh sách các MAC mới gửi heartbeat nhưng có thể chưa nằm trong bảng Devices (hoặc đang là CHUA_MAC_)
+  var extraMacs = [];
+  try {
+    var rawExtra = cache.get(NEW_HB_MACS_KEY);
+    if (rawExtra) extraMacs = JSON.parse(rawExtra);
+  } catch (e) {}
+
+  var cacheKeysObj = {};
+  for (var i = 0; i < values.length; i++) {
+    var rMac = String(values[i][macIdx] || "").trim().replace(/[:\-]/g, "").toUpperCase();
+    var rAd = normalizeAnydeskId(values[i][adIdx]);
+    if (rMac) cacheKeysObj["hb_" + rMac] = true;
+    if (rAd) cacheKeysObj["hbad_" + rAd] = true;
+  }
+  for (var m = 0; m < extraMacs.length; m++) {
+    cacheKeysObj["hb_" + extraMacs[m]] = true;
+  }
+
+  var allCacheKeys = Object.keys(cacheKeysObj);
+  var cachedMap = getCacheBatch(cache, allCacheKeys);
+
+  var nowMs = new Date().getTime();
+  var OFFLINE_THRESHOLD_MS = 12 * 60 * 1000;
+  var dirtySheet = false;
+  var matchedNewBoxOrSoft = false;
+  var handledMacs = {};
+
+  for (var r = 0; r < values.length; r++) {
+    var row = values[r];
+    var rowMac = String(row[macIdx] || "").trim().replace(/[:\-]/g, "").toUpperCase();
+    var rowAd = normalizeAnydeskId(row[adIdx]);
+
+    var hbStr = cachedMap["hb_" + rowMac] || (rowAd ? cachedMap["hbad_" + rowAd] : null);
+    if (hbStr) {
+      try {
+        var hb = JSON.parse(hbStr);
+        if (hb.mac && (rowMac.indexOf("CHUA_MAC_") === 0 || !rowMac)) {
+          row[macIdx] = hb.mac;
+          rowMac = hb.mac;
+          matchedNewBoxOrSoft = true;
+        }
+        if (hb.anydesk_id && hb.anydesk_id !== rowAd) {
+          row[adIdx] = hb.anydesk_id;
+          dirtySheet = true;
+        }
+        if (hb.software && hb.software !== row[softIdx]) {
+          row[softIdx] = hb.software;
+          matchedNewBoxOrSoft = true;
+        }
+        if (hb.mac_ics && hb.mac_ics !== row[icsIdx]) {
+          row[icsIdx] = hb.mac_ics;
+          matchedNewBoxOrSoft = true;
+        }
+        if (hb.last_seen && hb.last_seen !== row[lastSeenIdx]) {
+          row[lastSeenIdx] = hb.last_seen;
+          dirtySheet = true;
+        }
+        if (hb.app_version !== undefined && String(hb.app_version) !== "" && hb.app_version !== row[appVerIdx]) {
+          row[appVerIdx] = hb.app_version;
+          dirtySheet = true;
+        }
+        if (hb.storage_mb !== undefined && String(hb.storage_mb) !== "" && hb.storage_mb !== row[storageIdx]) {
+          row[storageIdx] = hb.storage_mb;
+          dirtySheet = true;
+        }
+        if (hb.current_task !== undefined && hb.current_task !== row[taskIdx]) {
+          row[taskIdx] = hb.current_task;
+          dirtySheet = true;
+        }
+        handledMacs[rowMac] = true;
+      } catch (parseErr) {}
+    }
+
+    // Tự động tính toán trạng thái online / offline theo mốc 12 phút
+    var lsVal = String(row[lastSeenIdx] || "").trim();
+    var curSt = String(row[statusIdx] || "").trim().toLowerCase();
+    if (lsVal) {
+      var seenMs = new Date(lsVal).getTime();
+      if (!isNaN(seenMs)) {
+        var newSt = (nowMs - seenMs) <= OFFLINE_THRESHOLD_MS ? "online" : "offline";
+        if (curSt !== "busy" && curSt !== newSt) {
+          row[statusIdx] = newSt;
+          dirtySheet = true;
+        }
+      }
+    }
+  }
+
+  // Ghi gộp toàn bộ bảng Devices chỉ bằng 1 lệnh setValues duy nhất!
+  if ((dirtySheet || matchedNewBoxOrSoft) && values.length > 0) {
+    devicesSheet.getRange(2, 1, values.length, headers.length).setValues(values);
+  }
+
+  // Thêm các Box hoàn toàn mới chưa có trong bảng Devices
+  for (var em = 0; em < extraMacs.length; em++) {
+    var eMac = extraMacs[em];
+    if (handledMacs[eMac]) continue;
+    var eHbStr = cachedMap["hb_" + eMac];
+    if (eHbStr) {
+      try {
+        var eHb = JSON.parse(eHbStr);
+        upsertDeviceByMacOrAnydesk(devicesSheet, eHb.mac, eHb.anydesk_id, {
+          mac: eHb.mac,
+          anydesk_id: eHb.anydesk_id || "",
+          software: eHb.software || "Radio 3.6",
+          mac_ics: eHb.mac_ics || "",
+          status: "online",
+          last_seen: eHb.last_seen || new Date().toISOString(),
+          app_version: eHb.app_version || "",
+          storage_mb: eHb.storage_mb || "",
+          task_id: eHb.current_task || ""
+        });
+        matchedNewBoxOrSoft = true;
+      } catch (e) {}
+    }
+  }
+
+  try {
+    cache.remove(NEW_HB_MACS_KEY);
+    cache.put(LAST_FLUSH_TS_KEY, String(nowMs), 3600);
+  } catch (e) {}
+
+  if (matchedNewBoxOrSoft) {
+    try {
+      syncProjectSheets();
+    } catch (e) {}
+  }
+}
+
+/**
+ * POST action=heartbeat (TỐI ƯU HÓA CHỊU TẢI CAO - PHƯƠNG ÁN A)
+ * - Ghi trực tiếp vào bộ nhớ đệm RAM (CacheService) trong ~5ms, KHÔNG khóa LockService.
+ * - Đọc nhiệm vụ đang chờ từ Cache RAM (~2ms).
+ * - Định kỳ 60 giây mới gom toàn bộ dữ liệu trong RAM ghi gộp 1 lần xuống Google Sheet.
+ */
+function handleHeartbeat(params) {
+  var rawMac = params.mac ? String(params.mac).trim() : "";
+  if (!rawMac) {
+    return errorResponse("Thiếu tham số bắt buộc: mac");
+  }
+
+  var cleanMac = rawMac.replace(/[:\-]/g, "").toUpperCase();
+  var anydeskId = params.anydesk_id !== undefined ? normalizeAnydeskId(params.anydesk_id) : "";
+  var nowIso = new Date().toISOString();
+  var nowMs = new Date().getTime();
+
+  var hbObj = {
+    mac: cleanMac,
+    anydesk_id: anydeskId,
+    last_seen: nowIso,
+    status: "online",
+    ram_mb: params.ram_mb !== undefined ? params.ram_mb : "",
+    storage_mb: params.storage_mb !== undefined ? params.storage_mb : "",
+    current_task: params.current_task !== undefined ? params.current_task : "",
+    app_version: params.app_version !== undefined ? params.app_version : "",
+    ip: params.ip !== undefined ? params.ip : "",
+    software: params.software !== undefined ? String(params.software).trim() : "",
+    mac_ics: params.mac_ics !== undefined ? String(params.mac_ics).trim() : ""
+  };
+
+  var cache = CacheService.getScriptCache();
+  try {
+    var hbJson = JSON.stringify(hbObj);
+    // Lưu nhịp sống vào RAM Cache (giữ trong 6 giờ = 21600 giây)
+    cache.put("hb_" + cleanMac, hbJson, 21600);
+    if (anydeskId) {
+      cache.put("hbad_" + anydeskId, hbJson, 21600);
+    }
+
+    // Ghi nhận MAC vào danh sách chờ đồng bộ
+    var rawExtra = cache.get(NEW_HB_MACS_KEY);
+    var extraArr = rawExtra ? JSON.parse(rawExtra) : [];
+    if (extraArr.indexOf(cleanMac) === -1 && extraArr.length < 400) {
+      extraArr.push(cleanMac);
+      cache.put(NEW_HB_MACS_KEY, JSON.stringify(extraArr), 3600);
+    }
+  } catch (cacheErr) {
+    Logger.log("Cache put error: " + cacheErr.message);
+  }
+
+  // Kiểm tra xem đã đến chu kỳ 60 giây để ghi gộp (Batch Flush) xuống Google Sheet chưa
+  var lastFlushStr = cache.get(LAST_FLUSH_TS_KEY);
+  var lastFlushMs = lastFlushStr ? parseInt(lastFlushStr, 10) : 0;
+  if (!lastFlushMs || (nowMs - lastFlushMs) >= FLUSH_INTERVAL_MS) {
+    var lock = LockService.getScriptLock();
+    // Dùng tryLock(400) KHÔNG CHỜ ĐỢI để không bao giờ làm nghẽn các Box khác
+    if (lock.tryLock(400)) {
+      try {
+        cache.put(LAST_FLUSH_TS_KEY, String(nowMs), 3600);
+        flushCachedHeartbeatsToSheet();
+      } catch (flushErr) {
+        Logger.log("flushCachedHeartbeatsToSheet error: " + flushErr.message);
+      } finally {
+        lock.releaseLock();
+      }
+    }
+  }
+
+  // Tìm task pending từ RAM Cache (chỉ mất 2ms)
+  var pendingTaskResult = getPendingTaskFromCacheOrSheet(cleanMac);
+
+  return {
+    status: "ok",
+    pending_task: pendingTaskResult
+  };
 }
 
 /**
@@ -837,6 +1055,7 @@ function handleClaimTask(params) {
     var nowIso = new Date().toISOString();
     tasksSheet.getRange(targetRowIdx, statusColIdx + 1).setValue("claimed");
     tasksSheet.getRange(targetRowIdx, claimedAtColIdx + 1).setValue(nowIso);
+    invalidatePendingTasksCache();
 
     // Cập nhật trạng thái thiết bị thành busy và gán task_id
     if (mac) {
@@ -923,6 +1142,7 @@ function handleCompleteTask(params) {
     if (resultColIdx !== -1) {
       tasksSheet.getRange(targetRowIdx, resultColIdx + 1).setValue(resultStr);
     }
+    invalidatePendingTasksCache();
 
     // Cập nhật Devices.status, Devices.task_id='', và các trường báo cáo (software, mac_ics, project...)
     if (mac) {
@@ -1193,6 +1413,7 @@ function handleCreateTask(params) {
       var startRow = tasksSheet.getLastRow() + 1;
       tasksSheet.getRange(startRow, 1, rowsToAppend.length, 8).setValues(rowsToAppend);
     }
+    invalidatePendingTasksCache();
 
     return {
       status: "ok",
@@ -1240,6 +1461,7 @@ function handleSaveTemplate(params) {
       created_by: params.created_by !== undefined ? String(params.created_by) : "admin",
       created_at: nowIso
     });
+    invalidatePendingTasksCache();
 
     return {
       status: "ok"
@@ -1250,44 +1472,90 @@ function handleSaveTemplate(params) {
 }
 
 /**
- * GET action=get_devices
- * Lấy toàn bộ danh sách thiết bị từ sheet Devices.
+ * GET action=get_devices (TỐI ƯU HÓA CHỊU TẢI CAO - KẾT HỢP RAM CACHE + BATCH FLUSH)
+ * - Ghép trực tiếp nhịp sống mới nhất từ RAM Cache (hb_<mac>) vào kết quả trả về cho Website/PC App.
+ * - Tuyệt đối không ghi lẻ từng ô trong vòng lặp, chỉ gọi Batch Flush tối đa 1 lần / 60 giây.
  */
 function handleGetDevices(params) {
-  var sheet = getSheet("Devices");
-  var headers = getSheetHeaders(sheet);
-  var statusColIdx = headers.indexOf("status");
-  var rawRows = getSheetRowsAsObjects(sheet);
   var nowMs = new Date().getTime();
-  var OFFLINE_THRESHOLD_MS = 12 * 60 * 1000; // Quá 12 phút không gửi heartbeat -> offline
+  var cache = CacheService.getScriptCache();
 
-  var devices = rawRows.map(function(r, idx) {
-    var st = String(r.status || "").trim();
-    var ls = String(r.last_seen || "").trim();
-    if (st.toLowerCase() === "online" && ls) {
-      var seenMs = new Date(ls).getTime();
-      if (!isNaN(seenMs) && (nowMs - seenMs) > OFFLINE_THRESHOLD_MS) {
-        st = "offline";
-        if (statusColIdx !== -1) {
-          try {
-            sheet.getRange(idx + 2, statusColIdx + 1).setValue("offline");
-          } catch (e) {}
-        }
+  // Nếu đã quá 60 giây chưa flush xuống Sheet, tranh thủ flush gộp 1 lần
+  var lastFlushStr = cache.get(LAST_FLUSH_TS_KEY);
+  var lastFlushMs = lastFlushStr ? parseInt(lastFlushStr, 10) : 0;
+  if (!lastFlushMs || (nowMs - lastFlushMs) >= FLUSH_INTERVAL_MS) {
+    var lock = LockService.getScriptLock();
+    if (lock.tryLock(600)) {
+      try {
+        cache.put(LAST_FLUSH_TS_KEY, String(nowMs), 3600);
+        flushCachedHeartbeatsToSheet();
+      } catch (e) {} finally {
+        lock.releaseLock();
       }
     }
+  }
+
+  var sheet = getSheet("Devices");
+  var rawRows = getSheetRowsAsObjects(sheet);
+  var OFFLINE_THRESHOLD_MS = 12 * 60 * 1000; // Quá 12 phút không gửi heartbeat -> offline
+
+  // Đọc toàn bộ nhịp sống mới nhất đang nằm trong RAM Cache (cập nhật tức thì < 1 giây)
+  var cacheKeysObj = {};
+  for (var i = 0; i < rawRows.length; i++) {
+    var rMac = String(rawRows[i].mac || "").trim().replace(/[:\-]/g, "").toUpperCase();
+    var rAd = normalizeAnydeskId(rawRows[i].anydesk_id);
+    if (rMac) cacheKeysObj["hb_" + rMac] = true;
+    if (rAd) cacheKeysObj["hbad_" + rAd] = true;
+  }
+  var cachedMap = getCacheBatch(cache, Object.keys(cacheKeysObj));
+
+  var devices = rawRows.map(function(r) {
+    var rMac = String(r.mac || "").trim().replace(/[:\-]/g, "").toUpperCase();
+    var rAd = normalizeAnydeskId(r.anydesk_id);
+    var st = String(r.status || "").trim();
+    var ls = String(r.last_seen || "").trim();
+    var soft = String(r.software || "Radio 3.6");
+    var ics = String(r.mac_ics || "");
+    var appVer = String(r.app_version || "");
+    var storage = String(r.storage_mb || "");
+    var taskId = String(r.task_id || "");
+
+    // Ghép dữ liệu mới nhất từ bộ nhớ đệm RAM (nếu vừa có Heartbeat mới gửi lên)
+    var hbStr = cachedMap["hb_" + rMac] || (rAd ? cachedMap["hbad_" + rAd] : null);
+    if (hbStr) {
+      try {
+        var hb = JSON.parse(hbStr);
+        if (hb.mac && (!rMac || rMac.indexOf("CHUA_MAC_") === 0)) rMac = hb.mac;
+        if (hb.anydesk_id) rAd = hb.anydesk_id;
+        if (hb.last_seen) ls = hb.last_seen;
+        if (hb.software) soft = hb.software;
+        if (hb.mac_ics) ics = hb.mac_ics;
+        if (hb.app_version !== undefined && String(hb.app_version) !== "") appVer = String(hb.app_version);
+        if (hb.storage_mb !== undefined && String(hb.storage_mb) !== "") storage = String(hb.storage_mb);
+        if (hb.current_task !== undefined) taskId = String(hb.current_task);
+      } catch (e) {}
+    }
+
+    if (ls) {
+      var seenMs = new Date(ls).getTime();
+      if (!isNaN(seenMs)) {
+        st = (nowMs - seenMs) <= OFFLINE_THRESHOLD_MS ? "online" : "offline";
+      }
+    }
+
     return {
-      mac: String(r.mac || ""),
-      anydesk_id: String(r.anydesk_id || ""),
+      mac: rMac,
+      anydesk_id: rAd,
       project: String(r.project || "Kho thiết bị"),
-      software: String(r.software || "Radio 3.6"),
-      mac_ics: String(r.mac_ics || ""),
+      software: soft,
+      mac_ics: ics,
       iot_id: String(r.iot_id || ""),
       imei_sim: String(r.imei_sim || ""),
       status: st,
       last_seen: ls,
-      app_version: String(r.app_version || ""),
-      storage_mb: String(r.storage_mb || ""),
-      task_id: String(r.task_id || ""),
+      app_version: appVer,
+      storage_mb: storage,
+      task_id: taskId,
       notes: String(r.notes || "")
     };
   });
@@ -1472,8 +1740,32 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu("🚀 SGL Quản Trị")
     .addItem("🔄 Đồng bộ & Tách Sheet theo từng Dự án", "syncProjectSheets")
-    .addItem("⚡ Khởi tạo lại cấu trúc Sheet chuẩn", "setupSheets")
+    .addItem("🚀 Ghi gộp RAM Cache xuống Sheet ngay (Batch Flush)", "flushCachedHeartbeatsToSheet")
+    .addItem("⚡ Bật Chế Độ Chịu Tải Cao (Tự động Flush 5 phút/lần)", "setupHighLoadTrigger")
+    .addSeparator()
+    .addItem("🛠 Khởi tạo lại cấu trúc Sheet chuẩn", "setupSheets")
     .addToUi();
+}
+
+/**
+ * Cài đặt Trigger định kỳ 5 phút/lần tự động gom dữ liệu Heartbeat từ RAM Cache ghi xuống Sheet.
+ */
+function setupHighLoadTrigger() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "flushCachedHeartbeatsToSheet") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  ScriptApp.newTrigger("flushCachedHeartbeatsToSheet")
+    .timeBased()
+    .everyMinutes(5)
+    .create();
+  try {
+    SpreadsheetApp.getUi().alert("✅ Đã kích hoạt Chế độ Chịu Tải Cao (In-Memory Cache + Batch Flush 5 phút/lần) thành công!");
+  } catch (e) {
+    Logger.log("Đã kích hoạt Trigger flushCachedHeartbeatsToSheet 5 phút/lần.");
+  }
 }
 
 /**
@@ -1482,6 +1774,7 @@ function onOpen() {
  */
 function handleSyncProjectSheets(params) {
   try {
+    try { flushCachedHeartbeatsToSheet(); } catch (fe) {}
     syncProjectSheets();
     return {
       status: "ok",
