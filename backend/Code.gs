@@ -414,6 +414,7 @@ function upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, dataObj) {
   var adRowIdx = -1;      // 1-based row on sheet
   var macRowData = null;
   var adRowData = null;
+  var pendingChuaMacRows = [];
 
   if (lastRow > 1) {
     var values = devicesSheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
@@ -429,6 +430,38 @@ function upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, dataObj) {
         adRowIdx = i + 2;
         adRowData = values[i];
       }
+      if (rMac.indexOf("CHUA_MAC_") === 0 && rAd) {
+        pendingChuaMacRows.push({ rowIdx: i + 2, rowData: values[i], ad: rAd });
+      }
+    }
+  }
+
+  // Fallback thông minh: Nếu Box mới kết nối lần đầu có MAC thật (chưa từng có trên Sheet)
+  // nhưng chưa gửi kèm anydesk_id (do chưa cấp Root kịp hoặc dùng APK cũ), tự động ghép với dòng CHUA_MAC_ vừa thêm!
+  if (cleanMac && !isPlaceholderMac(cleanMac) && !cleanAd && macRowIdx === -1 && adRowIdx === -1 && pendingChuaMacRows.length > 0) {
+    var recentPendingAd = "";
+    try {
+      recentPendingAd = normalizeAnydeskId(CacheService.getScriptCache().get("recent_pending_ad") || "");
+    } catch (e) {}
+    var chosenPending = null;
+    if (recentPendingAd) {
+      for (var p = 0; p < pendingChuaMacRows.length; p++) {
+        if (pendingChuaMacRows[p].ad === recentPendingAd) {
+          chosenPending = pendingChuaMacRows[p];
+          break;
+        }
+      }
+    }
+    if (!chosenPending && pendingChuaMacRows.length === 1) {
+      chosenPending = pendingChuaMacRows[0];
+    }
+    if (chosenPending) {
+      adRowIdx = chosenPending.rowIdx;
+      adRowData = chosenPending.rowData;
+      cleanAd = chosenPending.ad;
+      try {
+        CacheService.getScriptCache().remove("recent_pending_ad");
+      } catch (e) {}
     }
   }
 
@@ -1238,6 +1271,11 @@ function handleRegisterDevice(params) {
   }
   if (!mac && anydeskId) {
     mac = "CHUA_MAC_" + anydeskId;
+  }
+  if (isPlaceholderMac(mac) && anydeskId) {
+    try {
+      CacheService.getScriptCache().put("recent_pending_ad", anydeskId, 1800);
+    } catch (e) {}
   }
 
   var lock = LockService.getScriptLock();

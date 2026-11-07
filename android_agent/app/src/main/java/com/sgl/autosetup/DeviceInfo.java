@@ -25,10 +25,15 @@ public class DeviceInfo {
         try {
             Process process = Runtime.getRuntime().exec("su");
             DataOutputStream os = new DataOutputStream(process.getOutputStream());
-            os.writeBytes("if nsenter -t 1 -m -- /system/bin/sh -c 'true' >/dev/null 2>&1; then\n");
+            os.writeBytes("if command -v nsenter >/dev/null 2>&1; then\n");
             os.writeBytes("  nsenter -t 1 -m -- /system/bin/sh << 'EOF_SGL_DEV'\n");
             os.writeBytes(command + "\n");
             os.writeBytes("EOF_SGL_DEV\n");
+            os.writeBytes("  if [ $? -ne 0 ]; then\n");
+            os.writeBytes("    /system/bin/sh << 'EOF_SGL_DEV_FB'\n");
+            os.writeBytes(command + "\n");
+            os.writeBytes("EOF_SGL_DEV_FB\n");
+            os.writeBytes("  fi\n");
             os.writeBytes("else\n");
             os.writeBytes(command + "\n");
             os.writeBytes("fi\n");
@@ -90,16 +95,22 @@ public class DeviceInfo {
                         "  /data/data/com.anydesk.anydeskandroid; do " +
                         "  for f in \"$base/files/.anydesk/system.conf\" \"$base/files/.anydesk/service.conf\" \"$base/files/.anydesk/user.conf\" \"$base/files/system.conf\" \"$base/files/service.conf\"; do " +
                         "    if [ -f \"$f\" ]; then " +
-                        "      id=$(grep 'ad.anynet.id=' \"$f\" 2>/dev/null | head -n 1 | cut -d'=' -f2 | tr -dc '0-9'); " +
-                        "      if [ -n \"$id\" ]; then echo \"$id\"; exit 0; fi; " +
+                        "      grep 'ad.anynet.id=' \"$f\" 2>/dev/null | head -n 1 ; " +
                         "    fi; " +
                         "  done; " +
-                        "done; " +
-                        "id2=$(grep -rh 'ad.anynet.id=' /data/data/*anydesk* /data/user/0/*anydesk* /data/user_de/0/*anydesk* 2>/dev/null | head -n 1 | cut -d'=' -f2 | tr -dc '0-9'); " +
-                        "if [ -n \"$id2\" ]; then echo \"$id2\"; fi";
+                        "done 2>/dev/null";
         String raw = runRootCommand(cmd);
-        if (raw == null) return "";
-        return raw.replaceAll("[^0-9]", "").trim();
+        if (raw != null && !raw.isEmpty()) {
+            Matcher m = Pattern.compile("ad\\.anynet\\.id=\\s*(\\d{7,12})").matcher(raw);
+            if (m.find()) {
+                return m.group(1);
+            }
+            Matcher m2 = Pattern.compile("\\b(\\d{8,11})\\b").matcher(raw);
+            if (m2.find()) {
+                return m2.group(1);
+            }
+        }
+        return "";
     }
 
     /**

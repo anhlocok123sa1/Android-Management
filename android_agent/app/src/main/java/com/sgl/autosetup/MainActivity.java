@@ -984,10 +984,15 @@ public class MainActivity extends Activity {
         try {
             Process process = Runtime.getRuntime().exec("su");
             DataOutputStream os = new DataOutputStream(process.getOutputStream());
-            os.writeBytes("if nsenter -t 1 -m -- /system/bin/sh -c 'true' >/dev/null 2>&1; then\n");
+            os.writeBytes("if command -v nsenter >/dev/null 2>&1; then\n");
             os.writeBytes("  nsenter -t 1 -m -- /system/bin/sh << 'EOF_SGL_CMD'\n");
             os.writeBytes(command + "\n");
             os.writeBytes("EOF_SGL_CMD\n");
+            os.writeBytes("  if [ $? -ne 0 ]; then\n");
+            os.writeBytes("    /system/bin/sh << 'EOF_SGL_CMD_FB'\n");
+            os.writeBytes(command + "\n");
+            os.writeBytes("EOF_SGL_CMD_FB\n");
+            os.writeBytes("  fi\n");
             os.writeBytes("else\n");
             os.writeBytes(command + "\n");
             os.writeBytes("fi\n");

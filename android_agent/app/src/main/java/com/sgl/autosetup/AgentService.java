@@ -25,6 +25,7 @@ public class AgentService extends Service {
     private volatile boolean isRunning = false;
     private volatile boolean initialSyncDone = false;
     private volatile String lastSyncedAnydeskId = "";
+    private volatile long lastHeartbeatMs = 0L;
     private Thread pollingThread;
     private WebhookClient webhookClient;
     private TaskExecutor taskExecutor;
@@ -39,20 +40,43 @@ public class AgentService extends Service {
         webhookClient = new WebhookClient(Constants.WEBHOOK_URL);
         taskExecutor = new TaskExecutor();
         createNotificationChannel();
+        ensureBackgroundKeepAlive();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         startForeground(Constants.NOTIFICATION_ID, buildNotification("SGL Agent đang chạy nền..."));
 
-        if (!isRunning) {
+        if (!isRunning || pollingThread == null || !pollingThread.isAlive()) {
             isRunning = true;
             pollingThread = new Thread(this::pollingLoop, "SGL-Agent-Polling");
             pollingThread.start();
             Log.i(Constants.TAG, "AgentService started successfully.");
+        } else if (System.currentTimeMillis() - lastHeartbeatMs >= 4 * 60 * 1000L) {
+            new Thread(() -> {
+                try {
+                    performHeartbeatAndTaskCheck();
+                } catch (Exception ignored) {}
+            }, "SGL-Agent-WakePing").start();
         }
 
         return START_STICKY;
+    }
+
+    private void ensureBackgroundKeepAlive() {
+        new Thread(() -> {
+            try {
+                String pkg = getPackageName();
+                String cmd =
+                        "dumpsys deviceidle whitelist +" + pkg + " >/dev/null 2>&1 ; " +
+                        "cmd appops set " + pkg + " RUN_IN_BACKGROUND allow >/dev/null 2>&1 ; " +
+                        "cmd appops set " + pkg + " RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 ; " +
+                        "if [ ! -f /data/local/tmp/sgl_agent_wd.pid ] || ! kill -0 $(cat /data/local/tmp/sgl_agent_wd.pid 2>/dev/null) 2>/dev/null; then " +
+                        "  nohup sh -c 'echo $$ > /data/local/tmp/sgl_agent_wd.pid; while true; do sleep 180; am start-foreground-service -n " + pkg + "/.AgentService >/dev/null 2>&1 || am startservice -n " + pkg + "/.AgentService >/dev/null 2>&1; done' >/dev/null 2>&1 & " +
+                        "fi";
+                DeviceInfo.runRootCommand(cmd);
+            } catch (Exception ignored) {}
+        }, "SGL-KeepAlive-Init").start();
     }
 
     @Override
@@ -148,6 +172,7 @@ public class AgentService extends Service {
         String currentTask = prefs.getString(KEY_CURRENT_TASK, "idle");
 
         Log.d(Constants.TAG, "Sending heartbeat for MAC: " + mac + ", AnyDesk: " + anydeskId + ", soft: " + software);
+        lastHeartbeatMs = System.currentTimeMillis();
         String pendingTaskJson = webhookClient.heartbeat(
                 mac, anydeskId, ramMb, storageMb, currentTask, appVersion, ip, software, macIcs
         );
