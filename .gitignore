@@ -1,0 +1,37 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs and databases
+*.log
+*.csv
+
+# APKs and large binary files (GitHub limit is 100MB)
+*.apk
+*.zip
+*.tar.gz
+*.exe
+*.dll
+
+# Virtual environment
+env/
+venv/
+ENV/
+.venv/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Android build cache (if included)
+.gradle/
+build/
+local.properties
+
+# Local secrets
+.sgl_local_secret
+.env
+anydesk_config/

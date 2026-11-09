@@ -1,0 +1,247 @@
+package com.sgl.autosetup;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.os.IBinder;
+import android.util.Log;
+import androidx.core.app.NotificationCompat;
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.concurrent.TimeUnit;
+
+public class AgentService extends Service {
+
+    private static final String PREFS_NAME = "sgl_agent_prefs";
+    private static final String KEY_CURRENT_TASK = "current_task";
+
+    private volatile boolean isRunning = false;
+    private volatile boolean initialSyncDone = false;
+    private volatile String lastSyncedAnydeskId = "";
+    private volatile long lastHeartbeatMs = 0L;
+    private Thread pollingThread;
+    private WebhookClient webhookClient;
+    private TaskExecutor taskExecutor;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_CURRENT_TASK, "idle")
+                .apply();
+        webhookClient = new WebhookClient(Constants.WEBHOOK_URL);
+        taskExecutor = new TaskExecutor();
+        createNotificationChannel();
+        ensureBackgroundKeepAlive();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        startForeground(Constants.NOTIFICATION_ID, buildNotification("SGL Agent đang chạy nền..."));
+
+        if (!isRunning || pollingThread == null || !pollingThread.isAlive()) {
+            isRunning = true;
+            pollingThread = new Thread(this::pollingLoop, "SGL-Agent-Polling");
+            pollingThread.start();
+            Log.i(Constants.TAG, "AgentService started successfully.");
+        } else if (System.currentTimeMillis() - lastHeartbeatMs >= 4 * 60 * 1000L) {
+            new Thread(() -> {
+                try {
+                    performHeartbeatAndTaskCheck();
+                } catch (Exception ignored) {}
+            }, "SGL-Agent-WakePing").start();
+        }
+
+        return START_STICKY;
+    }
+
+    private void ensureBackgroundKeepAlive() {
+        new Thread(() -> {
+            try {
+                String pkg = getPackageName();
+                String cmd =
+                        "dumpsys deviceidle whitelist +" + pkg + " >/dev/null 2>&1 ; " +
+                        "cmd appops set " + pkg + " RUN_IN_BACKGROUND allow >/dev/null 2>&1 ; " +
+                        "cmd appops set " + pkg + " RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 ; " +
+                        "if [ ! -f /data/local/tmp/sgl_agent_wd.pid ] || ! kill -0 $(cat /data/local/tmp/sgl_agent_wd.pid 2>/dev/null) 2>/dev/null; then " +
+                        "  nohup sh -c 'echo $$ > /data/local/tmp/sgl_agent_wd.pid; while true; do sleep 180; am start-foreground-service -n " + pkg + "/.AgentService >/dev/null 2>&1 || am startservice -n " + pkg + "/.AgentService >/dev/null 2>&1; done' >/dev/null 2>&1 & " +
+                        "fi";
+                DeviceInfo.runRootCommand(cmd);
+            } catch (Exception ignored) {}
+        }, "SGL-KeepAlive-Init").start();
+    }
+
+    @Override
+    public void onDestroy() {
+        isRunning = false;
+        if (pollingThread != null) {
+            pollingThread.interrupt();
+        }
+        Log.i(Constants.TAG, "AgentService stopped.");
+        super.onDestroy();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    private void pollingLoop() {
+        // Đợi 3 giây ở lần khởi chạy đầu tiên để MainActivity (nếu đang mở) xin quyền Root trước, tránh trùng hộp thoại Superuser
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException ignored) {}
+
+        while (isRunning) {
+            try {
+                performHeartbeatAndTaskCheck();
+            } catch (Exception e) {
+                Log.e(Constants.TAG, "Error in polling loop: " + e.getMessage(), e);
+            }
+
+            try {
+                // Thêm độ lệch ngẫu nhiên (Jitter 0 - 45 giây) để hàng nghìn Box không gửi cùng 1 giây khi có điện lại
+                long jitterMs = (long) (Math.random() * 45000L);
+                Thread.sleep(Constants.POLL_INTERVAL_MS + jitterMs);
+            } catch (InterruptedException e) {
+                Log.i(Constants.TAG, "Polling loop interrupted.");
+                break;
+            }
+        }
+    }
+
+    private void performHeartbeatAndTaskCheck() {
+        String mac = DeviceInfo.getMac();
+        String anydeskId = readAnydeskId();
+
+        // Ở lần kết nối đầu tiên, nếu chưa đọc được AnyDesk ID (do đang chờ bấm cấp quyền Root hoặc AnyDesk đang khởi tạo),
+        // tự động thử lại tối đa 6 lần (mỗi lần cách nhau 2.5 giây) để đảm bảo gửi kèm cả MAC + AnyDesk ID ngay lần đầu!
+        if (!initialSyncDone && (anydeskId == null || anydeskId.isEmpty())) {
+            for (int retry = 0; retry < 6 && isRunning; retry++) {
+                try {
+                    Thread.sleep(2500);
+                } catch (InterruptedException e) {
+                    break;
+                }
+                anydeskId = readAnydeskId();
+                if (mac == null || mac.isEmpty() || "UNKNOWN".equals(mac)) {
+                    mac = DeviceInfo.getMac();
+                }
+                if (anydeskId != null && !anydeskId.isEmpty()) {
+                    break;
+                }
+            }
+        }
+
+        long ramMb = DeviceInfo.getRamMb(this);
+        long storageMb = DeviceInfo.getStorageMb();
+        String appVersion = DeviceInfo.getAppVersion(this);
+        String ip = DeviceInfo.getIpAddress();
+        String software = DeviceInfo.detectInstalledSoftware(this);
+        String macIcs = "VNPT ICS".equals(software) ? DeviceInfo.extractIcsMacIfPresent() : "";
+
+        // Ngay lần đầu tiên gửi tín hiệu (hoặc ngay khi phát hiện mã AnyDesk mới), gọi đồng bộ đầy đủ (register_device + heartbeat)
+        // để điền thẳng MAC thật vào dòng chờ CHUA_MAC_<anydesk> trên Google Sheet tức thì!
+        if (mac != null && !mac.isEmpty() && !"UNKNOWN".equals(mac)) {
+            if (!initialSyncDone || (!anydeskId.isEmpty() && !anydeskId.equals(lastSyncedAnydeskId))) {
+                try {
+                    WebhookClient.SyncBoxResult syncRes = webhookClient.syncOldBoxByAnydesk(
+                            mac, anydeskId, software, macIcs, appVersion, storageMb, ramMb, ip
+                    );
+                    if (syncRes != null && syncRes.success) {
+                        initialSyncDone = true;
+                        if (!anydeskId.isEmpty()) {
+                            lastSyncedAnydeskId = anydeskId;
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.w(Constants.TAG, "Initial syncOldBoxByAnydesk warning: " + e.getMessage());
+                }
+            }
+        }
+
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String currentTask = prefs.getString(KEY_CURRENT_TASK, "idle");
+
+        Log.d(Constants.TAG, "Sending heartbeat for MAC: " + mac + ", AnyDesk: " + anydeskId + ", soft: " + software);
+        lastHeartbeatMs = System.currentTimeMillis();
+        String pendingTaskJson = webhookClient.heartbeat(
+                mac, anydeskId, ramMb, storageMb, currentTask, appVersion, ip, software, macIcs
+        );
+
+        if (pendingTaskJson != null && !pendingTaskJson.isEmpty() && "idle".equals(currentTask)) {
+            try {
+                JSONObject taskObj = new JSONObject(pendingTaskJson);
+                String taskId = taskObj.getString("task_id");
+                String templateName = taskObj.optString("template_name", "unnamed");
+                String stepsJson = taskObj.optString("steps_json", "[]");
+
+                Log.i(Constants.TAG, "Received pending task: " + taskId + " (" + templateName + ")");
+
+                // Try to claim task
+                boolean claimed = webhookClient.claimTask(mac, taskId);
+                if (claimed) {
+                    Log.i(Constants.TAG, "Claimed task " + taskId + " successfully. Starting execution...");
+                    prefs.edit().putString(KEY_CURRENT_TASK, taskId).apply();
+                    updateNotification("Đang chạy nhiệm vụ: " + templateName);
+                    try {
+                        TaskExecutor.ExecutionResult execRes = taskExecutor.execute(this, taskId, templateName, stepsJson, mac, webhookClient);
+                        Log.i(Constants.TAG, "Task execution finished. Success: " + execRes.success);
+                        webhookClient.completeTask(mac, taskId, execRes.result != null ? execRes.result : execRes.error, execRes.success);
+                    } finally {
+                        prefs.edit().putString(KEY_CURRENT_TASK, "idle").apply();
+                        updateNotification("SGL Agent đang chạy nền...");
+                    }
+                } else {
+                    Log.w(Constants.TAG, "Could not claim task " + taskId + " (already claimed or cancelled)");
+                }
+            } catch (Exception e) {
+                Log.e(Constants.TAG, "Failed to parse/process pending task: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    private String readAnydeskId() {
+        return DeviceInfo.getAnydeskId();
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    Constants.NOTIFICATION_CHANNEL_ID,
+                    "SGL AutoSetup Agent Service",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("Dịch vụ đồng bộ nhiệm vụ từ xa");
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
+        }
+    }
+
+    private Notification buildNotification(String contentText) {
+        return new NotificationCompat.Builder(this, Constants.NOTIFICATION_CHANNEL_ID)
+                .setContentTitle("SGL Truyền Thanh Agent")
+                .setContentText(contentText)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .build();
+    }
+
+    private void updateNotification(String contentText) {
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) {
+            manager.notify(Constants.NOTIFICATION_ID, buildNotification(contentText));
+        }
+    }
+}
