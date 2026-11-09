@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SGL Smart Broadcast Cloud — Quản Trị Thiết Bị Truyền Thanh</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- =================================================================== -->
+  <!-- LOGIN GATE OVERLAY (BẢO MẬT ĐĂNG NHẬP HỆ THỐNG)                     -->
+  <!-- =================================================================== -->
+  <div id="loginGate" class="login-gate">
+    <div class="login-card" id="loginCard">
+      <div class="login-header">
+        <div class="login-logo">SGL</div>
+        <div class="login-title">SGL SMART BROADCAST CLOUD</div>
+        <div class="login-subtitle">🔒 Cổng Xác Thực Quản Trị Thiết Bị Truyền Thanh</div>
+      </div>
+
+      <form id="loginForm" onsubmit="handleLoginSubmit(event)" autocomplete="on">
+        <div class="form-row">
+          <label for="loginUsername">👤 Tài khoản quản trị</label>
+          <input
+            type="text"
+            id="loginUsername"
+            class="input-control"
+            placeholder="Nhập tài khoản (admin)"
+            autocomplete="username"
+            required
+          />
+        </div>
+
+        <div class="form-row">
+          <label for="loginPassword">🔑 Mật khẩu bảo mật</label>
+          <div class="password-wrapper">
+            <input
+              type="password"
+              id="loginPassword"
+              class="input-control"
+              placeholder="Nhập mật khẩu bảo mật..."
+              autocomplete="current-password"
+              required
+            />
+            <button
+              type="button"
+              class="btn-eye"
+              id="btnTogglePass"
+              onclick="togglePasswordVisibility()"
+              title="Hiện / Ẩn mật khẩu"
+            >
+              👁
+            </button>
+          </div>
+        </div>
+
+        <div class="login-remember-row">
+          <label class="remember-label">
+            <input type="checkbox" id="loginRemember" checked />
+            <span>Ghi nhớ đăng nhập trên thiết bị này (7 ngày)</span>
+          </label>
+        </div>
+
+        <div id="loginErrorBox" class="login-error" style="display:none;"></div>
+
+        <button type="submit" id="btnLoginSubmit" class="btn btn-primary login-btn">
+          🔐 ĐĂNG NHẬP HỆ THỐNG
+        </button>
+      </form>
+
+      <div class="login-footer">
+        Bảo mật xác thực băm mật mã SHA-256 &bull; SGL Smart Broadcast System
+      </div>
+    </div>
+  </div>
+
+  <!-- TOP NAVIGATION BAR -->
+  <header class="topbar" id="appTopbar" style="display:none;">
+    <div class="brand">
+      <div class="brand-logo">SGL</div>
+      <div>
+        <div class="brand-title">SGL SMART BROADCAST CLOUD</div>
+        <div class="brand-subtitle">Hệ Thống Quản Trị &amp; Điều Khiển Thiết Bị Truyền Thanh Android</div>
+      </div>
+    </div>
+
+    <nav class="nav-tabs">
+      <button class="nav-tab active" data-tab="tab-dashboard" onclick="switchTab('tab-dashboard')">
+        📡 Dashboard Thực Địa
+      </button>
+      <button class="nav-tab" data-tab="tab-deploy" onclick="switchTab('tab-deploy')">
+        🚀 Triển Khai Dự Án (GĐ2)
+      </button>
+      <button class="nav-tab" data-tab="tab-builder" onclick="switchTab('tab-builder')">
+        🛠 Trình Tạo Kịch Bản
+      </button>
+      <button class="nav-tab" data-tab="tab-settings" onclick="switchTab('tab-settings')">
+        ⚙️ Cấu Hình &amp; Sheet
+      </button>
+    </nav>
+
+    <div class="topbar-actions">
+      <div class="sync-indicator" title="Tự động đồng bộ mỗi 30 giây">
+        <span class="pulse-dot" id="syncDot"></span>
+        <span id="lblLastSync">Đang kết nối...</span>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="refreshAllData()">
+        🔄 Làm mới
+      </button>
+      <a id="btnOpenSheetTop" href="https://docs.google.com/spreadsheets/d/1-7ZrYTDnoL68BNB7D9QQWxhDGcGNXW3VVfdedAtejAg/edit" target="_blank" class="btn btn-cyan btn-sm" style="text-decoration:none;">
+        📊 Mở Google Sheet
+      </a>
+      <button class="btn btn-danger btn-sm" onclick="handleLogout()" title="Đăng xuất khỏi phiên làm việc">
+        🚪 Đăng xuất
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-container" id="appMain" style="display:none;">
+
+    <!-- =================================================================== -->
+    <!-- TAB 1: DASHBOARD THỰC ĐỊA                                           -->
+    <!-- =================================================================== -->
+    <section id="tab-dashboard" class="tab-panel active">
+
+      <!-- KPI CARDS -->
+      <div class="kpi-grid">
+        <div class="kpi-card kpi-total" onclick="setStatusFilter('ALL')">
+          <div>
+            <div class="kpi-label">Tổng Thiết Bị</div>
+            <div class="kpi-value" id="kpiTotal">0</div>
+            <div class="kpi-sub">Toàn bộ hệ thống</div>
+          </div>
+          <div class="kpi-icon">📦</div>
+        </div>
+
+        <div class="kpi-card kpi-online" onclick="setStatusFilter('online')">
+          <div>
+            <div class="kpi-label">Đang Online</div>
+            <div class="kpi-value" id="kpiOnline">0</div>
+            <div class="kpi-sub">Heartbeat &le; 8 phút</div>
+          </div>
+          <div class="kpi-icon">🟢</div>
+        </div>
+
+        <div class="kpi-card kpi-slow" onclick="setStatusFilter('slow')">
+          <div>
+            <div class="kpi-label">Mạng Chậm</div>
+            <div class="kpi-value" id="kpiSlow">0</div>
+            <div class="kpi-sub">Heartbeat 8 – 12 phút</div>
+          </div>
+          <div class="kpi-icon">🟡</div>
+        </div>
+
+        <div class="kpi-card kpi-offline" onclick="setStatusFilter('offline')">
+          <div>
+            <div class="kpi-label">Đang Offline</div>
+            <div class="kpi-value" id="kpiOffline">0</div>
+            <div class="kpi-sub">Quá 12 phút / Mất nguồn</div>
+          </div>
+          <div class="kpi-icon">🔴</div>
+        </div>
+
+        <div class="kpi-card kpi-projects" onclick="syncSheetsOnCloud()">
+          <div>
+            <div class="kpi-label">Số Dự Án</div>
+            <div class="kpi-value" id="kpiProjects">0</div>
+            <div class="kpi-sub">Bấm để tách Sheet tự động</div>
+          </div>
+          <div class="kpi-icon">📁</div>
+        </div>
+      </div>
+
+      <!-- PROJECT PILL BAR (Tách theo từng dự án giống Google Sheet) -->
+      <div class="project-pills-bar" id="projectPillsBar">
+        <span class="project-pill active" onclick="setProjectFilter('ALL')">
+          🌐 Tất cả dự án <span class="pill-count" id="pillCountAll">0</span>
+        </span>
+      </div>
+
+      <!-- FILTER & BULK ACTION TOOLBAR -->
+      <div class="toolbar-card">
+        <div class="filter-group">
+          <input
+            type="text"
+            id="txtSearch"
+            class="input-control search-box"
+            placeholder="🔍 Tìm kiếm MAC, AnyDesk ID, Mã ICS, Dự án, Ghi chú..."
+            oninput="renderDeviceTable()"
+          />
+
+          <select id="selFilterProject" class="select-control" onchange="onProjectSelectChange()">
+            <option value="ALL">📁 Dự án: TẤT CẢ</option>
+          </select>
+
+          <select id="selFilterSoftware" class="select-control" onchange="renderDeviceTable()">
+            <option value="ALL">💿 Phần mềm: TẤT CẢ</option>
+            <option value="Radio 3.6">Radio 3.6</option>
+            <option value="VNPT ICS">VNPT ICS</option>
+            <option value="Radio 1.66">Radio 1.66</option>
+            <option value="Radio 2.0">Radio 2.0</option>
+          </select>
+
+          <select id="selFilterStatus" class="select-control" onchange="renderDeviceTable()">
+            <option value="ALL">📡 Trạng thái: TẤT CẢ</option>
+            <option value="online">🟢 Đang Online</option>
+            <option value="slow">🟡 Mạng Chậm</option>
+            <option value="offline">🔴 Đang Offline</option>
+          </select>
+        </div>
+
+        <div class="action-group">
+          <span id="lblSelectedCount" class="mono" style="color:var(--accent-green); font-weight:700; margin-right:4px;">
+            Đã chọn: 0
+          </span>
+          <button class="btn btn-amber" onclick="openAssignProjectModal()">
+            📁 Gán Dự Án
+          </button>
+          <button class="btn btn-primary" onclick="openQuickDeployModal()">
+            🚀 Chốt Dự Án Từ Xa
+          </button>
+          <button class="btn btn-cyan" onclick="openBulkImportOldProjectModal()">
+            📋 Thêm Dự Án Cũ (Dán DS AnyDesk)
+          </button>
+          <button class="btn btn-outline" onclick="openAddDeviceModal()">
+            ➕ Thêm Box Lẻ
+          </button>
+          <button class="btn btn-outline" onclick="exportCurrentViewCsv()">
+            📥 Xuất Excel (CSV)
+          </button>
+          <button class="btn btn-outline" onclick="syncSheetsOnCloud()" title="Đồng bộ tách Sheet từng dự án và Sheet Final">
+            🔀 Tách Sheet Dự Án
+          </button>
+        </div>
+      </div>
+
+      <!-- DEVICE TABLE -->
+      <div class="table-container">
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:36px;">
+                  <input type="checkbox" id="chkSelectAll" onchange="toggleSelectAll(this.checked)" />
+                </th>
+                <th>STT</th>
+                <th>Trạng Thái</th>
+                <th>Địa Chỉ MAC</th>
+                <th>AnyDesk ID</th>
+                <th>Mã IoT</th>
+                <th>Dự Án (Địa phương)</th>
+                <th>Phần Mềm</th>
+                <th>Mã ICS</th>
+                <th>Lần Cuối Online</th>
+                <th>Bộ Nhớ</th>
+                <th>Task Hiện Tại</th>
+                <th>Thao Tác Nhanh</th>
+              </tr>
+            </thead>
+            <tbody id="deviceTableBody">
+              <tr>
+                <td colspan="13" style="text-align:center; padding:32px; color:var(--text-secondary);">
+                  ⏳ Đang tải danh sách thiết bị từ Google Sheet Cloud...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- TAB 2: TRIỂN KHAI DỰ ÁN TỪ XA (GIAI ĐOẠN 2) & HÀNG ĐỢI TASK          -->
+    <!-- =================================================================== -->
+    <section id="tab-deploy" class="tab-panel">
+      <div class="split-grid">
+        <!-- Cột trái: Cấu hình giao nhiệm vụ từ xa -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <div class="panel-title">🚀 GIAO NHIỆM VỤ CHỐT DỰ ÁN TỪ XA (OTA)</div>
+            <span class="mono" id="deploySelectedBadge" style="color:var(--accent-cyan);">0 thiết bị được chọn</span>
+          </div>
+
+          <div class="form-row">
+            <label>1. Chọn Kịch Bản Triển Khai (Template):</label>
+            <select id="selDeployTemplate" class="select-control" onchange="onDeployTemplateChange()"></select>
+          </div>
+
+          <div class="form-row">
+            <label>Mô tả kịch bản:</label>
+            <div id="lblTemplateDesc" style="padding:8px 12px; background:var(--bg-input); border-radius:6px; color:var(--accent-amber); font-size:13px;">
+              --
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label>Chi tiết các bước thực thi tự động trên Android Box (JSON Steps):</label>
+            <textarea id="txtDeployStepsPreview" class="code-editor" readonly></textarea>
+          </div>
+
+          <div class="form-row">
+            <label>2. Danh sách MAC mục tiêu (Cách nhau bởi dấu phẩy hoặc chọn từ bảng Dashboard):</label>
+            <textarea id="txtDeployTargetMacs" class="code-editor" style="min-height:90px; color:var(--accent-green);" placeholder="Ví dụ: 900EB3D6BF2C, 900EB3D52C1D"></textarea>
+          </div>
+
+          <div style="display:flex; gap:10px; margin-top:14px;">
+            <button class="btn btn-primary" id="btnExecuteDeploy" onclick="executeRemoteDeploy()" style="flex:1; justify-content:center; padding:12px;">
+              🚀 PHÁT LỆNH TRIỂN KHAI LÊN CLOUD SHEET
+            </button>
+            <button class="btn btn-outline" onclick="fillOnlineMacsToDeploy()">
+              🟢 Chọn tất cả máy đang Online
+            </button>
+          </div>
+        </div>
+
+        <!-- Cột phải: Hàng đợi Tasks thời gian thực -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <div class="panel-title">📋 LỊCH SỬ &amp; HÀNG ĐỢI NHIỆM VỤ (TASKS QUEUE)</div>
+            <button class="btn btn-outline btn-sm" onclick="loadTasksQueue()">🔄 Làm mới Task</button>
+          </div>
+
+          <div class="table-scroll" style="max-height:540px;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Task ID</th>
+                  <th>MAC</th>
+                  <th>Kịch Bản</th>
+                  <th>Trạng Thái</th>
+                  <th>Kết Quả / Log</th>
+                </tr>
+              </thead>
+              <tbody id="tasksTableBody">
+                <tr>
+                  <td colspan="5" style="text-align:center; padding:24px; color:var(--text-secondary);">
+                    Chưa có dữ liệu nhiệm vụ.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- TAB 3: TRÌNH TẠO KỊCH BẢN (SCRIPT BUILDER)                          -->
+    <!-- =================================================================== -->
+    <section id="tab-builder" class="tab-panel">
+      <div class="split-grid">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div class="panel-title">🛠 TẠO / CHỈNH SỬA KỊCH BẢN TỰ ĐỘNG</div>
+          </div>
+
+          <div class="form-row">
+            <label>Tên Kịch Bản (Mã định danh không dấu, ví dụ: deploy_xa_xuyen_moc):</label>
+            <input type="text" id="txtBuilderName" class="input-control" placeholder="VD: deploy_custom_ics" />
+          </div>
+
+          <div class="form-row">
+            <label>Mô tả ngắn gọn:</label>
+            <input type="text" id="txtBuilderDesc" class="input-control" placeholder="VD: Gỡ Radio 3.6, cài ICS và báo cáo dự án" />
+          </div>
+
+          <div class="form-row">
+            <label>Thêm nhanh bước lệnh mẫu:</label>
+            <div style="display:flex; flex-wrap:wrap; gap:8px;">
+              <button class="btn btn-outline btn-sm" onclick="addBuilderStep('install_apk')">📦 + Cài APK</button>
+              <button class="btn btn-outline btn-sm" onclick="addBuilderStep('uninstall_pkg')">🗑 + Gỡ Package</button>
+              <button class="btn btn-outline btn-sm" onclick="addBuilderStep('shell_cmd')">💻 + Lệnh Root Shell</button>
+              <button class="btn btn-outline btn-sm" onclick="addBuilderStep('start_app')">▶️ + Mở Ứng Dụng</button>
+              <button class="btn btn-outline btn-sm" onclick="addBuilderStep('extract_ics_mac')">🔍 + Đọc Mã ICS</button>
+              <button class="btn btn-outline btn-sm" onclick="addBuilderStep('report_field')">📝 + Báo Cáo Trường</button>
+              <button class="btn btn-outline btn-sm" onclick="addBuilderStep('download_apk')">🌐 + Tải APK từ URL</button>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label>Nội dung JSON Steps:</label>
+            <textarea id="txtBuilderJson" class="code-editor" style="min-height:260px;">[
+  {
+    "action": "shell_cmd",
+    "params": {
+      "cmd": "am force-stop vn.phitn.app.radiostation"
+    }
+  },
+  {
+    "action": "report_field",
+    "params": {
+      "field": "software",
+      "value": "Radio 3.6"
+    }
+  }
+]</textarea>
+          </div>
+
+          <button class="btn btn-primary" onclick="saveCustomTemplate()" style="width:100%; justify-content:center; padding:12px;">
+            💾 LƯU KỊCH BẢN LÊN GOOGLE SHEET
+          </button>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-header">
+            <div class="panel-title">📚 DANH SÁCH KỊCH BẢN HIỆN CÓ TRÊN SHEET</div>
+          </div>
+          <div id="templateListContainer" style="display:flex; flex-direction:column; gap:10px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- TAB 4: CẤU HÌNH HỆ THỐNG & GOOGLE SHEET                              -->
+    <!-- =================================================================== -->
+    <section id="tab-settings" class="tab-panel">
+      <div class="panel-card" style="max-width:780px; margin:0 auto;">
+        <div class="panel-header">
+          <div class="panel-title">⚙️ CẤU HÌNH KẾT NỐI CLOUD WEBHOOK &amp; ANYDESK</div>
+        </div>
+
+        <div class="form-row">
+          <label>Google Apps Script Webhook URL:</label>
+          <input type="text" id="txtWebhookUrl" class="input-control mono" />
+        </div>
+
+        <div class="form-row">
+          <label>Link Google Sheet Quản Lý Dự Án:</label>
+          <input type="text" id="txtSheetUrl" class="input-control mono" />
+        </div>
+
+        <div class="form-row">
+          <label>Mật khẩu AnyDesk mặc định (Unattended Access):</label>
+          <input type="password" id="txtDefaultAdPass" class="input-control mono" placeholder="Được giải mã tự động khi đăng nhập Quản trị viên" autocomplete="off" />
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:18px;">
+          <button class="btn btn-primary" onclick="saveSettings()">💾 Lưu Cấu Hình</button>
+          <button class="btn btn-cyan" onclick="resetDefaultSettings()">🔄 Khôi Phục Mặc Định</button>
+          <button class="btn btn-amber" onclick="syncSheetsOnCloud()">🔀 Đồng Bộ Tách Sheet Ngay</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 1: GÁN DỰ ÁN & PHẦN MỀM HÀNG LOẠT                               -->
+  <!-- ===================================================================== -->
+  <div class="modal-backdrop" id="modalAssignProject">
+    <div class="modal-box">
+      <div class="modal-title">📁 Gán / Chuyển Dự Án Hàng Loạt</div>
+      <div class="form-row">
+        <label>Số lượng thiết bị đang chọn:</label>
+        <div id="lblModalAssignCount" class="mono" style="color:var(--accent-cyan); font-weight:700;">0 thiết bị</div>
+      </div>
+      <div class="form-row">
+        <label>Chọn dự án có sẵn hoặc nhập tên Dự án mới:</label>
+        <input type="text" id="txtModalProjectName" list="dlExistingProjects" class="input-control" placeholder="VD: Xã Xuyên Mộc (102 box)" />
+        <datalist id="dlExistingProjects"></datalist>
+      </div>
+      <div class="form-row">
+        <label>Cập nhật loại Phần mềm (Tùy chọn):</label>
+        <select id="selModalSoftware" class="select-control">
+          <option value="">-- Giữ nguyên phần mềm hiện tại --</option>
+          <option value="Radio 3.6">Radio 3.6</option>
+          <option value="Radio 3.6 (Test)">Radio 3.6 (Test)</option>
+          <option value="VNPT ICS">VNPT ICS</option>
+          <option value="Radio 1.66">Radio 1.66</option>
+          <option value="Radio 2.0">Radio 2.0</option>
+        </select>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+        <button class="btn btn-outline" onclick="closeModal('modalAssignProject')">Hủy</button>
+        <button class="btn btn-primary" onclick="confirmAssignProject()">✔ Xác Nhận Lưu Lên Sheet</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 2: THÊM / ĐĂNG KÝ BOX MỚI THỦ CÔNG                              -->
+  <!-- ===================================================================== -->
+  <div class="modal-backdrop" id="modalAddDevice">
+    <div class="modal-box">
+      <div class="modal-title">➕ Đăng Ký / Thêm Android Box Lẻ Lên Sheet</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="form-row">
+          <label>Mã AnyDesk ID (*):</label>
+          <input type="text" id="txtAddAnydesk" class="input-control mono" placeholder="VD: 1371078125" oninput="onAddAnydeskInput(this.value)" />
+        </div>
+        <div class="form-row">
+          <label>Mã IoT (Mạch IoT):</label>
+          <input type="text" id="txtAddIot" class="input-control mono" placeholder="VD: 11738 / Mã IoT" />
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Địa chỉ MAC Android (Không cần nhập — Tự động lấy khi Box kết nối):</label>
+        <input type="text" id="txtAddMac" class="input-control mono" placeholder="⚡ Để trống: Tự động điền MAC khi Box gửi tín hiệu lần đầu" />
+        <div id="lblAutoMacHint" style="font-size:11.5px; color:var(--accent-cyan); margin-top:4px;">
+          ⚡ Chỉ cần nhập Mã AnyDesk & Mã IoT, hệ thống sẽ tự động lấy MAC thật ngay lần đầu Box kết nối!
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="form-row">
+          <label>Dự án:</label>
+          <input type="text" id="txtAddProject" list="dlExistingProjects" class="input-control" value="Kho thiết bị" />
+        </div>
+        <div class="form-row">
+          <label>Phần mềm cài đặt:</label>
+          <select id="selAddSoftware" class="select-control">
+            <option value="Radio 3.6 (Test)">Radio 3.6 (Test)</option>
+            <option value="Radio 3.6">Radio 3.6</option>
+            <option value="VNPT ICS">VNPT ICS</option>
+            <option value="Radio 1.66">Radio 1.66</option>
+            <option value="Radio 2.0">Radio 2.0</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="form-row">
+          <label>Mã ICS (Nếu có):</label>
+          <input type="text" id="txtAddIcs" class="input-control mono" placeholder="Tùy chọn" />
+        </div>
+        <div class="form-row">
+          <label>IMEI SIM (Nếu có):</label>
+          <input type="text" id="txtAddImei" class="input-control mono" placeholder="Tùy chọn" />
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Ghi chú / Cụm loa lắp đặt:</label>
+        <input type="text" id="txtAddNotes" class="input-control" placeholder="VD: Cụm loa Thôn 1..." />
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+        <button class="btn btn-outline" onclick="closeModal('modalAddDevice')">Hủy</button>
+        <button class="btn btn-primary" onclick="confirmAddDevice()">➕ Lưu Thiết Bị</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 3: THÊM DỰ ÁN CŨ (DÁN DANH SÁCH MÃ ANYDESK TẠO SHEET DỰ ÁN)     -->
+  <!-- ===================================================================== -->
+  <div class="modal-backdrop" id="modalBulkImportOldProject">
+    <div class="modal-box" style="max-width:580px;">
+      <div class="modal-title">📋 Thêm Dự Án Cũ — Dán Danh Sách Mã AnyDesk</div>
+      <p style="font-size:12.5px; color:var(--text-secondary); margin-bottom:12px; line-height:1.5;">
+        Nhập tên dự án (sẽ tự động tạo 1 Sheet riêng trên Google Sheet) và dán danh sách mã AnyDesk của dự án đó.
+        Sau đó khi bạn vào AnyDesk từng Box cài <code>00_AutoSetup.apk</code>, App sẽ <b>tự động dò mã AnyDesk trên Sheet</b>,
+        điền MAC thật, cập nhật <b>Phần mềm đang sử dụng</b> và trạng thái <b>Online / Offline</b>.
+      </p>
+      <div class="form-row">
+        <label>Tên Dự Án / Tên Sheet Mới (*):</label>
+        <input
+          type="text"
+          id="txtBulkOldProjectName"
+          list="dlExistingProjects"
+          class="input-control"
+          placeholder="VD: Xã Hòa Hiệp (Dự án cũ)"
+        />
+      </div>
+      <div class="form-row">
+        <label>Phần mềm mặc định ban đầu (Sẽ tự động cập nhật lại khi cài App vào Box):</label>
+        <select id="selBulkOldSoftware" class="select-control">
+          <option value="Chưa đồng bộ">🔄 Tự động nhận diện khi cài App lên Box</option>
+          <option value="Radio 3.6">Radio 3.6</option>
+          <option value="VNPT ICS">VNPT ICS</option>
+          <option value="Radio 1.66">Radio 1.66</option>
+          <option value="Radio 2.0">Radio 2.0</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Dán danh sách mã AnyDesk (Mỗi dòng 1 mã hoặc copy từ Excel/Zalo):</label>
+        <textarea
+          id="txtBulkOldAnydeskList"
+          class="code-editor"
+          style="min-height:170px;"
+          placeholder="1371078125&#10;1074358911&#10;1748089615&#10;..."
+        ></textarea>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button class="btn btn-outline" onclick="closeModal('modalBulkImportOldProject')">Hủy</button>
+        <button class="btn btn-primary" id="btnConfirmBulkOld" onclick="confirmBulkImportOldProject()">
+          📥 Tạo Sheet Dự Án &amp; Nạp Mã AnyDesk
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
