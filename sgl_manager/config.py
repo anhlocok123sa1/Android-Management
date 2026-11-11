@@ -57,6 +57,9 @@ def get_anydesk_exe():
         os.path.expandvars(r"%ProgramFiles%\AnyDesk\AnyDesk.exe"),
         os.path.expandvars(r"%LocalAppData%\AnyDesk\AnyDesk.exe"),
         os.path.expandvars(r"%AppData%\AnyDesk\AnyDesk.exe"),
+        os.path.expandvars(r"%USERPROFILE%\Downloads\AnyDesk.exe"),
+        os.path.expandvars(r"%USERPROFILE%\Downloads\anydesk.exe"),
+        os.path.expandvars(r"%USERPROFILE%\Desktop\AnyDesk.exe"),
         "anydesk"
     ]
     for p in paths:
