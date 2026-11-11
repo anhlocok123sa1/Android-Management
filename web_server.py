@@ -1,3 +1,4 @@
+import atexit
 import http.server
 import json
 import os
@@ -105,6 +106,7 @@ def start_cloudflared_tunnel(port: int = PORT):
                 text=True,
                 creationflags=CREATE_NO_WINDOW
             )
+            atexit.register(lambda: proc.kill() if proc.poll() is None else None)
             for line in proc.stderr:
                 m = re.search(r"https://[a-zA-Z0-9\-]+\.trycloudflare\.com", line)
                 if m:
