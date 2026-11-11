@@ -483,6 +483,17 @@ table.data-table tbody tr.selected-row {
   background: rgba(0, 230, 118, 0.08);
 }
 
+table.data-table tbody tr.newly-added-row {
+  background: rgba(0, 255, 65, 0.12) !important;
+  box-shadow: inset 4px 0 0 var(--accent-green);
+  animation: glowNewRow 3s ease-out;
+}
+
+@keyframes glowNewRow {
+  0% { background: rgba(0, 255, 65, 0.28); }
+  100% { background: rgba(0, 255, 65, 0.12); }
+}
+
 table.data-table tbody td {
   padding: 10px 14px;
   font-size: 13px;

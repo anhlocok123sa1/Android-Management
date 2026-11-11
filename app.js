@@ -16,7 +16,8 @@ let state = {
   templates: [],
   tasks: [],
   selectedMacs: new Set(),
-  filteredDevices: []
+  filteredDevices: [],
+  recentlyAddedKeys: new Set()
 };
 
 // Đọc tham số URL chia sẻ nhanh nếu có: ?printer=https://...
@@ -542,6 +543,11 @@ async function refreshAllData() {
     ]);
 
     if (devRes && Array.isArray(devRes.devices)) {
+      devRes.devices.forEach((d, idx) => {
+        if (d._rawIndex === undefined) {
+          d._rawIndex = idx;
+        }
+      });
       state.devices = mergeDuplicateAnydeskRows(devRes.devices);
     }
 
@@ -622,6 +628,9 @@ function mergeDuplicateAnydeskRows(rawDevices) {
       // Đã có Box thật cùng mã AnyDesk -> Gộp Dự án, Mã IoT, IMEI, Ghi chú từ dòng chờ sang dòng Box thật
       const realDev = realByAd[ad];
       let needSync = false;
+      if (d._rawIndex !== undefined) {
+        realDev._rawIndex = Math.max(realDev._rawIndex || 0, d._rawIndex);
+      }
       if ((!realDev.project || realDev.project === "Kho thiết bị") && d.project && d.project !== "Kho thiết bị") {
         realDev.project = d.project;
         needSync = true;
@@ -815,11 +824,47 @@ function renderDeviceTable() {
     return true;
   });
 
-  // Sắp xếp Online lên đầu, sau đó theo dự án
+  // Sắp xếp: Box mới thêm luôn ở TRÊN ĐẦU TABLE
   filtered.sort((a, b) => {
-    const sa = evaluateDeviceStatus(a).mins;
-    const sb = evaluateDeviceStatus(b).mins;
-    return sa - sb;
+    const aMac = (a.mac || "").toUpperCase();
+    const bMac = (b.mac || "").toUpperCase();
+    const aAd = (a.anydesk_id || "").replace(/\D/g, "");
+    const bAd = (b.anydesk_id || "").replace(/\D/g, "");
+
+    // 1. Ưu tiên số 1: Box vừa được thêm mới / đổi dự án trong phiên này (recentlyAddedKeys)
+    const aRecent = state.recentlyAddedKeys && (state.recentlyAddedKeys.has(aMac) || (aAd && state.recentlyAddedKeys.has(aAd)));
+    const bRecent = state.recentlyAddedKeys && (state.recentlyAddedKeys.has(bMac) || (bAd && state.recentlyAddedKeys.has(bAd)));
+    if (aRecent && !bRecent) return -1;
+    if (!aRecent && bRecent) return 1;
+
+    // 2. Ưu tiên số 2: Box đang chờ (placeholder MAC: CHUA_MAC_...) luôn xếp trên đầu
+    const aPending = isPlaceholderMac(aMac);
+    const bPending = isPlaceholderMac(bMac);
+    if (aPending && !bPending) return -1;
+    if (!aPending && bPending) return 1;
+
+    // Thứ tự thêm vào hệ thống (box mới thêm có _rawIndex cao hơn -> xếp trên)
+    const orderDiff = (b._rawIndex ?? 0) - (a._rawIndex ?? 0);
+
+    if (aPending && bPending) {
+      return orderDiff;
+    }
+
+    // 3. Nếu đang xem một Dự Án cụ thể: xếp box mới thêm vào dự án lên đầu table
+    const curProj = document.getElementById("selFilterProject") ? document.getElementById("selFilterProject").value : "ALL";
+    if (curProj !== "ALL") {
+      return orderDiff;
+    }
+
+    // 4. Nếu xem "TẤT CẢ" dự án: Ưu tiên Online -> Chậm -> Offline. Trong cùng nhóm, box mới nhất lên đầu
+    const stA = evaluateDeviceStatus(a);
+    const stB = evaluateDeviceStatus(b);
+    if (stA.tag !== stB.tag) {
+      const rank = { online: 0, slow: 1, offline: 2 };
+      return rank[stA.tag] - rank[stB.tag];
+    }
+
+    return orderDiff;
   });
 
   state.filteredDevices = filtered;
@@ -858,9 +903,10 @@ function renderDeviceTable() {
     const safeAd = escapeHtml(adId);
     const safeIot = escapeHtml(iotId);
     const isPendingMac = isPlaceholderMac(mac);
+    const isRecent = state.recentlyAddedKeys && (state.recentlyAddedKeys.has(safeMac) || (adId && state.recentlyAddedKeys.has(adId.replace(/\D/g, ""))));
 
     html += `
-      <tr class="${isChecked ? 'selected-row' : ''}">
+      <tr class="${isChecked ? 'selected-row' : ''} ${isRecent ? 'newly-added-row' : ''}">
         <td>
           <input type="checkbox" ${isChecked ? "checked" : ""} onchange="toggleSelectDevice('${safeMac}', this.checked)" />
         </td>
@@ -1036,7 +1082,11 @@ async function confirmAssignProject() {
       target_macs: macs
     });
     if (res && res.status === "ok") {
+      macs.forEach(m => state.recentlyAddedKeys.add(String(m).toUpperCase()));
       showToast(`✔ Đã cập nhật ${macs.length} thiết bị vào dự án '${projName}'!`);
+      if (projName && projName !== "ALL") {
+        setProjectFilter(projName);
+      }
       refreshAllData();
     } else {
       showToast(`❌ Lỗi: ${(res && res.message) || "Không thể cập nhật dự án"}`, true);
@@ -1137,8 +1187,13 @@ async function confirmAddDevice() {
       notes: notes
     });
     if (res && res.status === "ok") {
+      if (mac) state.recentlyAddedKeys.add(mac.toUpperCase());
+      if (adId) state.recentlyAddedKeys.add(adId.replace(/\D/g, ""));
       const returnedMac = res.mac && !isPlaceholderMac(res.mac) ? ` | MAC: ${res.mac}` : " (Sẽ tự điền MAC khi Box kết nối)";
       showToast(`✔ Đã lưu AnyDesk ${adId}${returnedMac} lên Google Sheet!`);
+      if (proj && proj !== "ALL") {
+        setProjectFilter(proj);
+      }
       refreshAllData();
     } else {
       showToast(`❌ Lỗi: ${(res && res.message) || "Không thể lưu thiết bị"}`, true);
@@ -1219,10 +1274,11 @@ async function confirmBulkImportOldProject() {
     });
 
     if (res && res.status === "ok") {
+      adList.forEach(ad => state.recentlyAddedKeys.add(String(ad).replace(/\D/g, "")));
       closeModal("modalBulkImportOldProject");
       showToast(`✔ Đã tạo Sheet dự án "${projName}" với ${adList.length} mã AnyDesk!`);
-      await refreshAllData();
       setProjectFilter(projName);
+      await refreshAllData();
     } else {
       showToast(`❌ Lỗi nạp danh sách: ${(res && res.message) || "Không xác định"}`, true);
     }
