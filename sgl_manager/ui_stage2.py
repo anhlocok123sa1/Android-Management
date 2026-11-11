@@ -311,7 +311,20 @@ class Stage2Frame(tk.Frame):
         for item in self.tree_devs.get_children():
             self.tree_devs.delete(item)
 
-        for d in self.devices:
+        # Sắp xếp: Box mới thêm (hoặc đang chờ MAC) lên đầu bảng
+        devs_sorted = list(self.devices)
+        devs_sorted.reverse()  # Đảo ngược thứ tự Sheet: Mới nhất -> Cũ nhất
+
+        def _dev_sort_priority(d):
+            m = str(d.get("mac", "")).upper()
+            # 0: Đang chờ MAC (CHUA_MAC_...) -> lên trên cùng
+            if "CHUA_MAC" in m or "BOX_" in m or not m or m == "UNKNOWN":
+                return 0
+            return 1
+
+        devs_sorted.sort(key=_dev_sort_priority)
+
+        for d in devs_sorted:
             mac = d.get("mac", "")
             ad_id = d.get("anydesk_id", "")
             iot_id = d.get("iot_id") or d.get("iot") or "-"
