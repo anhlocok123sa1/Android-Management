@@ -11,6 +11,7 @@ from .config import (
     DEFAULT_ANYDESK_PASS, APK_AUTOSETUP, BASE_DIR,
     open_anydesk_session, open_anydesk_file_transfer, open_explorer_select_file
 )
+from .printer_engine import print_box_label
 
 class OnboarderDialog(tk.Toplevel):
     """
@@ -170,7 +171,48 @@ class OnboarderDialog(tk.Toplevel):
         )
         btn_close.pack(side=tk.RIGHT)
 
+        btn_print = tk.Button(
+            foot_frame, text="[ 🖨️ IN TEM BOX ]", font=("Consolas", 8, "bold"),
+            bg="#063B23", fg=FG_MATRIX, activebackground="#0E5E38", activeforeground="#FFFFFF",
+            relief="flat", bd=0, highlightthickness=1, highlightbackground=BORDER_NEON,
+            padx=10, pady=4, cursor="hand2", command=self.print_current_label
+        )
+        btn_print.pack(side=tk.RIGHT, padx=6)
+
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def print_current_label(self):
+        if not self.target:
+            return
+        mac = self.target.get("mac", "")
+        ad_id = str(self.target.get("anydesk_id", "")).strip()
+        iot_id = str(self.target.get("iot_id") or self.target.get("iot") or "").strip()
+
+        if not ad_id or "Chưa" in ad_id:
+            messagebox.showwarning("Cảnh báo", f"Box {mac} chưa có AnyDesk ID!")
+            return
+
+        if not iot_id or iot_id == "-":
+            from tkinter import simpledialog
+            val = simpledialog.askstring(
+                "Nhập Mã IoT",
+                f"Box AnyDesk: {ad_id}\nĐịa chỉ MAC: {mac}\n\nNhập Mã IoT để in lên tem (VD: 11250):",
+                initialvalue="",
+                parent=self
+            )
+            if val is None:
+                return
+            iot_id = val.strip()
+            self.target["iot_id"] = iot_id
+
+        self.log(f"Đang gửi lệnh in tem: AnyDesk {ad_id} | IoT {iot_id}...")
+        ok, msg = print_box_label(anydesk_id=ad_id, iot_id=iot_id)
+        if ok:
+            self.log(f"-> 🖨️ In tem thành công cho Box {ad_id}!")
+            messagebox.showinfo("In thành công", f"Đã in tem thành công cho Box (AnyDesk: {ad_id} | IoT: {iot_id})")
+        else:
+            self.log(f"-> [!] Lỗi in tem: {msg}")
+            messagebox.showerror("Lỗi in", msg)
 
     def log(self, text):
         t_str = time.strftime("%H:%M:%S")

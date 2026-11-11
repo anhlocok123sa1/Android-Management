@@ -47,6 +47,9 @@ FG_DIM = "#4E7A5B"
 FG_TEXT = "#C8F7D2"
 BORDER_NEON = "#008F24"
 
+# Tên máy in nhãn nhiệt Windows
+DEFAULT_PRINTER_NAME = "AiYin_D11"
+
 def get_anydesk_exe():
     """Tìm đường dẫn file AnyDesk.exe trên hệ thống Windows."""
     paths = [

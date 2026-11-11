@@ -125,14 +125,15 @@ class WebhookClient:
         res = self._post(payload)
         return isinstance(res, dict) and res.get("status") == "ok"
 
-    def register_device(self, mac: str, anydesk_id: str, project: str = "Kho thiết bị", software: str = "Radio 3.6 (Test)", mac_ics: str = "") -> bool:
+    def register_device(self, mac: str, anydesk_id: str, project: str = "Kho thiết bị", software: str = "Radio 3.6 (Test)", mac_ics: str = "", iot_id: str = "") -> bool:
         payload = {
             "action": "register_device",
             "mac": mac,
             "anydesk_id": anydesk_id,
             "project": project,
             "software": software,
-            "mac_ics": mac_ics
+            "mac_ics": mac_ics,
+            "iot_id": iot_id
         }
         res = self._post(payload)
         return isinstance(res, dict) and res.get("status") == "ok"

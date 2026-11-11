@@ -384,6 +384,17 @@ code, .mono {
   box-shadow: 0 0 14px rgba(0, 230, 118, 0.4);
 }
 
+.btn-success {
+  background: #0d4a25;
+  color: #00ff66;
+  border-color: #00ff66;
+}
+.btn-success:hover:not(:disabled) {
+  background: #146935;
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(0, 255, 102, 0.4);
+}
+
 .btn-cyan {
   background: var(--accent-cyan-dim);
   color: var(--accent-cyan);

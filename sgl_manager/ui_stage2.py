@@ -10,6 +10,7 @@ from .config import (
     DEFAULT_ANYDESK_PASS, open_anydesk_session
 )
 from .ui_onboarder import OnboarderDialog
+from .printer_engine import print_box_label
 
 class Stage2Frame(tk.Frame):
     def __init__(self, parent, webhook_client=None):
@@ -81,6 +82,14 @@ class Stage2Frame(tk.Frame):
         )
         btn_onboard.pack(side=tk.LEFT, padx=4)
 
+        btn_print_label = tk.Button(
+            top_left_bar, text="[ 🖨️ IN TEM BOX ]", font=("Consolas", 8, "bold"),
+            bg="#063B23", fg=FG_MATRIX, activebackground="#0E5E38", activeforeground="#FFFFFF",
+            relief="flat", bd=0, highlightthickness=1, highlightbackground=BORDER_NEON,
+            padx=8, pady=2, command=self.print_label_selected
+        )
+        btn_print_label.pack(side=tk.LEFT, padx=4)
+
         btn_select_all = tk.Button(
             top_left_bar, text="[ ☑ CHỌN HẾT ]", font=("Consolas", 8, "bold"),
             bg=BG_PANEL, fg=FG_TEXT, activebackground="#14291A", activeforeground="#FFFFFF",
@@ -96,11 +105,12 @@ class Stage2Frame(tk.Frame):
         )
         btn_refresh_devs.pack(side=tk.RIGHT, padx=4)
 
-        columns = ("select", "mac", "anydesk", "project", "software", "mac_ics", "last_seen", "task")
+        columns = ("select", "mac", "anydesk", "iot", "project", "software", "mac_ics", "last_seen", "task")
         self.tree_devs = ttk.Treeview(left_frame, columns=columns, show="headings", height=12)
         self.tree_devs.heading("select", text="[X]")
         self.tree_devs.heading("mac", text="MAC ADDRESS")
         self.tree_devs.heading("anydesk", text="ANYDESK ID")
+        self.tree_devs.heading("iot", text="MÃ IOT")
         self.tree_devs.heading("project", text="DỰ ÁN HIỆN TẠI")
         self.tree_devs.heading("software", text="PHẦN MỀM")
         self.tree_devs.heading("mac_ics", text="MÃ ICS")
@@ -108,13 +118,14 @@ class Stage2Frame(tk.Frame):
         self.tree_devs.heading("task", text="TRẠNG THÁI TASK")
 
         self.tree_devs.column("select", width=35, anchor="center", stretch=False)
-        self.tree_devs.column("mac", width=140, anchor="center", stretch=False)
-        self.tree_devs.column("anydesk", width=115, anchor="center", stretch=False)
-        self.tree_devs.column("project", width=130, anchor="w", stretch=False)
-        self.tree_devs.column("software", width=100, anchor="center", stretch=False)
-        self.tree_devs.column("mac_ics", width=115, anchor="center", stretch=False)
-        self.tree_devs.column("last_seen", width=140, anchor="center", stretch=False)
-        self.tree_devs.column("task", width=160, anchor="w", stretch=True)
+        self.tree_devs.column("mac", width=130, anchor="center", stretch=False)
+        self.tree_devs.column("anydesk", width=110, anchor="center", stretch=False)
+        self.tree_devs.column("iot", width=75, anchor="center", stretch=False)
+        self.tree_devs.column("project", width=120, anchor="w", stretch=False)
+        self.tree_devs.column("software", width=95, anchor="center", stretch=False)
+        self.tree_devs.column("mac_ics", width=110, anchor="center", stretch=False)
+        self.tree_devs.column("last_seen", width=135, anchor="center", stretch=False)
+        self.tree_devs.column("task", width=150, anchor="w", stretch=True)
 
         self.tree_devs.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tree_devs.bind("<ButtonRelease-1>", self.on_device_click)
@@ -123,9 +134,13 @@ class Stage2Frame(tk.Frame):
 
         # Context Menu chuột phải
         self.menu = tk.Menu(self, tearoff=0, bg=BG_PANEL, fg=FG_TEXT, activebackground="#0F381E", activeforeground="#FFFFFF")
+        self.menu.add_command(label="🖨️ In Tem Box (Mã vạch AnyDesk + Mã IoT) [1-Click]", command=self.print_label_selected)
+        self.menu.add_command(label="✏️ Nhập / Đổi Mã IoT cho Box này...", command=self.edit_iot_id_selected)
+        self.menu.add_separator()
         self.menu.add_command(label="💻 Mở AnyDesk (Tự động nạp mật khẩu)", command=self.open_selected_anydesk)
         self.menu.add_command(label="📋 Sao chép Mật khẩu AnyDesk", command=lambda: self._set_clipboard(DEFAULT_ANYDESK_PASS, "Đã sao chép mật khẩu AnyDesk"))
         self.menu.add_command(label="📋 Sao chép AnyDesk ID", command=self.copy_selected_anydesk)
+        self.menu.add_command(label="📋 Sao chép Mã IoT", command=self.copy_selected_iot)
         self.menu.add_command(label="📋 Sao chép MAC Address", command=self.copy_selected_mac)
         self.menu.add_command(label="📋 Sao chép Mã ICS", command=self.copy_selected_ics)
         self.menu.add_separator()
@@ -299,6 +314,7 @@ class Stage2Frame(tk.Frame):
         for d in self.devices:
             mac = d.get("mac", "")
             ad_id = d.get("anydesk_id", "")
+            iot_id = d.get("iot_id") or d.get("iot") or "-"
             proj = d.get("project") or "Chưa gán"
             soft = d.get("software") or "Radio 3.6"
             mac_ics = d.get("mac_ics") or "-"
@@ -311,7 +327,7 @@ class Stage2Frame(tk.Frame):
 
             is_sel = mac in self.selected_macs
 
-            vals = ("[X]" if is_sel else "[ ]", mac, ad_id, proj, soft, mac_ics, last_seen, task)
+            vals = ("[X]" if is_sel else "[ ]", mac, ad_id, iot_id, proj, soft, mac_ics, last_seen, task)
             self.tree_devs.insert("", tk.END, iid=mac, values=vals)
 
         self.update_summary()
@@ -352,6 +368,17 @@ class Stage2Frame(tk.Frame):
         if vals and len(vals) >= 3:
             self._set_clipboard(vals[2], f"Đã chép AnyDesk ID: {vals[2]}")
 
+    def copy_selected_iot(self):
+        sel = self.tree_devs.selection()
+        if not sel: return
+        vals = self.tree_devs.item(sel[0], "values")
+        if vals and len(vals) > 3:
+            iot = vals[3]
+            if iot and iot != "-":
+                self._set_clipboard(iot, f"Đã chép Mã IoT: {iot}")
+            else:
+                messagebox.showinfo("Thông báo", "Thiết bị này chưa có mã IoT")
+
     def copy_selected_mac(self):
         sel = self.tree_devs.selection()
         if not sel: return
@@ -363,12 +390,113 @@ class Stage2Frame(tk.Frame):
         sel = self.tree_devs.selection()
         if not sel: return
         vals = self.tree_devs.item(sel[0], "values")
-        if vals and len(vals) > 5:
-            ics = vals[5]
+        if vals and len(vals) > 6:
+            ics = vals[6]
             if ics and ics != "-":
                 self._set_clipboard(ics, f"Đã chép Mã ICS: {ics}")
             else:
                 messagebox.showinfo("Thông báo", "Thiết bị này chưa có mã ICS")
+
+    def print_label_selected(self):
+        """1-Click in tem dán vỏ Box (Mã vạch AnyDesk + Mã IoT) chuẩn mẫu 15x40mm."""
+        targets = []
+        if self.selected_macs:
+            for d in self.devices:
+                if d.get("mac") in self.selected_macs:
+                    targets.append(d)
+        else:
+            sel = self.tree_devs.selection()
+            if sel:
+                sel_mac = sel[0]
+                for d in self.devices:
+                    if d.get("mac") == sel_mac:
+                        targets.append(d)
+                        break
+
+        if not targets:
+            messagebox.showinfo("Thông báo", "Vui lòng tick chọn [X] hoặc bấm chọn ít nhất 1 box trong danh sách để in tem!")
+            return
+
+        success_count = 0
+        for dev in targets:
+            mac = dev.get("mac", "")
+            ad_id = str(dev.get("anydesk_id", "")).strip()
+            iot_id = str(dev.get("iot_id") or dev.get("iot") or "").strip()
+
+            if not ad_id or "Chưa" in ad_id:
+                messagebox.showwarning("Thiếu AnyDesk ID", f"Box MAC {mac} chưa có AnyDesk ID để tạo mã vạch!")
+                continue
+
+            # Nếu máy chưa có mã IoT -> hiện popup hỏi nhanh
+            if not iot_id or iot_id == "-":
+                val = simpledialog.askstring(
+                    "Nhập Mã IoT",
+                    f"Box AnyDesk: {ad_id}\nĐịa chỉ MAC: {mac}\n\nNhập Mã IoT để in lên tem (VD: 11250):",
+                    initialvalue="",
+                    parent=self
+                )
+                if val is None:
+                    # Bỏ qua box này
+                    continue
+                iot_id = val.strip()
+                dev["iot_id"] = iot_id
+                # Đồng bộ lên Google Sheet nếu có webhook
+                if self.webhook:
+                    def _sync(m=mac, ad=ad_id, p=dev.get("project", ""), s=dev.get("software", ""), mi=dev.get("mac_ics", ""), iot=iot_id):
+                        try:
+                            self.webhook.register_device(m, ad, p, s, mi, iot_id=iot)
+                        except Exception:
+                            pass
+                    threading.Thread(target=_sync, daemon=True).start()
+
+            ok, msg = print_box_label(anydesk_id=ad_id, iot_id=iot_id)
+            if not ok:
+                messagebox.showerror("Lỗi in tem", f"Lỗi khi in tem cho AnyDesk {ad_id}:\n{msg}")
+                return
+            success_count += 1
+
+        self._render_devices()
+        if success_count > 0:
+            messagebox.showinfo("In hoàn tất", f"Đã bắn lệnh in tem thành công cho {success_count} box qua máy in AiYin D11S!")
+
+    def edit_iot_id_selected(self):
+        """Hộp thoại cập nhật nhanh Mã IoT cho box đang chọn."""
+        sel = self.tree_devs.selection()
+        if not sel:
+            messagebox.showinfo("Thông báo", "Vui lòng chọn 1 box trong danh sách!")
+            return
+        sel_mac = sel[0]
+        target_dev = None
+        for d in self.devices:
+            if d.get("mac") == sel_mac:
+                target_dev = d
+                break
+        if not target_dev:
+            return
+
+        cur_iot = target_dev.get("iot_id") or target_dev.get("iot") or ""
+        if cur_iot == "-":
+            cur_iot = ""
+        new_iot = simpledialog.askstring(
+            "Cập nhật Mã IoT",
+            f"Box: {target_dev.get('anydesk_id')} (MAC: {sel_mac})\n\nNhập Mã IoT mới (VD: 11250):",
+            initialvalue=cur_iot,
+            parent=self
+        )
+        if new_iot is not None:
+            new_iot = new_iot.strip()
+            target_dev["iot_id"] = new_iot
+            if self.webhook:
+                threading.Thread(
+                    target=lambda: self.webhook.register_device(
+                        sel_mac, target_dev.get("anydesk_id", ""),
+                        target_dev.get("project", ""), target_dev.get("software", ""),
+                        target_dev.get("mac_ics", ""), iot_id=new_iot
+                    ),
+                    daemon=True
+                ).start()
+            self._render_devices()
+            messagebox.showinfo("Thành công", f"Đã lưu Mã IoT '{new_iot}' cho Box {target_dev.get('anydesk_id')}!")
 
     def assign_project_selected(self):
         target_macs = list(self.selected_macs)

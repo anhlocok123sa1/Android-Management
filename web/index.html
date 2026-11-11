@@ -221,6 +221,9 @@
           <button class="btn btn-primary" onclick="openQuickDeployModal()">
             🚀 Chốt Dự Án Từ Xa
           </button>
+          <button class="btn btn-success" onclick="printSelectedDevices()" title="In tem dán vỏ Box hàng loạt cho các thiết bị đã chọn qua máy in AiYin D11S">
+            🖨️ In Tem Box Đã Chọn
+          </button>
           <button class="btn btn-cyan" onclick="openBulkImportOldProjectModal()">
             📋 Thêm Dự Án Cũ (Dán DS AnyDesk)
           </button>
@@ -434,6 +437,14 @@
         <div class="form-row">
           <label>Mật khẩu AnyDesk mặc định (Unattended Access):</label>
           <input type="password" id="txtDefaultAdPass" class="input-control mono" placeholder="Được giải mã tự động khi đăng nhập Quản trị viên" autocomplete="off" />
+        </div>
+
+        <div class="form-row">
+          <label>🌐 Link Máy In Cục Bộ (Cloudflare Tunnel HTTPS / Localhost):</label>
+          <input type="text" id="txtPrintServerUrl" class="input-control mono" placeholder="VD: https://xxxx.trycloudflare.com hoặc http://localhost:8080" />
+          <small style="color:var(--text-muted); font-size:11px; margin-top:4px; display:block;">
+            Dán link HTTPS do Cloudflare Tunnel tạo ra trên máy tính xưởng để mọi người dùng Web GitHub có thể in từ xa.
+          </small>
         </div>
 
         <div style="display:flex; gap:10px; margin-top:18px;">
