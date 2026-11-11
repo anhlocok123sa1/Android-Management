@@ -952,7 +952,7 @@ async function copyText(text, msg) {
 }
 
 // ============================================================================
-// ANYDESK LAUNCHER (LOCAL HELPER + MODAL QUICK-CONNECT + URI FALLBACK)
+// ANYDESK LAUNCHER (LOCAL HELPER + URI FALLBACK)
 // ============================================================================
 async function connectAnyDesk(adId) {
   if (!adId || adId === "Chưa có") {
@@ -965,20 +965,12 @@ async function connectAnyDesk(adId) {
     return;
   }
 
-  // 1. Luôn sao chép mã AnyDesk ID vào Clipboard để người dùng dán ngay vào AnyDesk
+  // Luôn chép sẵn mật khẩu vào clipboard
   try {
-    await navigator.clipboard.writeText(cleanId);
+    await navigator.clipboard.writeText(state.adPass);
   } catch (e) {}
 
-  // 2. Mở Modal trợ giúp kết nối AnyDesk (có sẵn nút sao chép Mã và Mật khẩu)
-  const lblId = document.getElementById("lblModalAnydeskId");
-  const lblPass = document.getElementById("lblModalAnydeskPass");
-  if (lblId) lblId.textContent = cleanId;
-  if (lblPass) lblPass.textContent = state.adPass || "(Mặc định của Box)";
-  const modal = document.getElementById("modalConnectAnyDesk");
-  if (modal) modal.classList.add("open");
-
-  // 3. Thử gọi Local Python Web Server (/api/open_anydesk) nếu đang chạy trực tiếp trên máy này
+  // Thử gọi Local Python Web Server (/api/open_anydesk) nếu đang chạy trên PC
   try {
     const resp = await fetch("/api/open_anydesk", {
       method: "POST",
@@ -988,32 +980,16 @@ async function connectAnyDesk(adId) {
     if (resp.ok) {
       const data = await resp.json();
       if (data.status === "ok") {
-        showToast(`🚀 Đã mở AnyDesk ${cleanId} (Đã tự nạp mật khẩu)`);
+        showToast(`🚀 Đang mở AnyDesk ${cleanId} (Đã tự nạp mật khẩu ${state.adPass})`);
         return;
       }
     }
   } catch (err) {
-    // Nếu đang mở trên GitHub Pages -> kích hoạt giao thức URI anydesk:
+    // Nếu đang mở file trực tiếp hoặc qua GitHub Pages -> dùng URI protocol anydesk:
   }
 
-  showToast(`💻 Đã sao chép mã AnyDesk ${cleanId} vào Clipboard & gửi lệnh mở AnyDesk...`);
+  showToast(`💻 Đang mở AnyDesk ${cleanId} (Đã chép sẵn mật khẩu ${state.adPass} vào Clipboard)`);
   window.location.href = `anydesk:${cleanId}`;
-}
-
-function copyModalAnyDeskId() {
-  const elem = document.getElementById("lblModalAnydeskId");
-  const id = elem ? elem.textContent.trim() : "";
-  if (id && id !== "---") {
-    copyText(id, `✔ Đã chép mã AnyDesk: ${id}`);
-  }
-}
-
-function copyModalAnyDeskPass() {
-  const elem = document.getElementById("lblModalAnydeskPass");
-  const pass = elem ? elem.textContent.trim() : state.adPass;
-  if (pass && pass !== "---") {
-    copyText(pass, `🔑 Đã chép mật khẩu: ${pass}`);
-  }
 }
 
 // ============================================================================
