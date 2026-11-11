@@ -68,17 +68,34 @@ class PocketBaseClient:
             return res["items"]
         return []
 
-    def register_device(self, mac: str, anydesk_id: str = "", project: str = "") -> bool:
-        """Dang ky hoac cap nhat thiet bi."""
+    def register_device(
+        self,
+        mac: str,
+        anydesk_id: str = "",
+        project: str = "",
+        software: str = "",
+        mac_ics: str = "",
+        iot_id: str = "",
+    ) -> Dict:
+        """Dang ky hoac cap nhat thiet bi tren PocketBase (tuong thich signature WebhookClient)."""
         c_mac = clean_mac(mac)
         c_ad = clean_anydesk(anydesk_id)
         if not c_mac:
-            return False
+            return {"status": "error", "message": "Thiếu MAC"}
 
         # Kiem tra neu thiet bi da co
         query = urllib.parse.quote(f"mac='{c_mac}'")
         existing = self._request(f"/api/collections/devices/records?filter=({query})")
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        notes = []
+        if software:
+            notes.append(f"App: {software}")
+        if mac_ics:
+            notes.append(f"ICS MAC: {mac_ics}")
+        if iot_id:
+            notes.append(f"IoT: {iot_id}")
+        notes_str = "; ".join(notes)
 
         payload = {
             "mac": c_mac,
@@ -87,14 +104,34 @@ class PocketBaseClient:
             "status": "new",
             "last_seen": now,
         }
+        if software:
+            payload["app_version"] = software.strip()
+        if notes_str:
+            payload["notes"] = notes_str
 
         if existing and existing.get("items"):
             rec_id = existing["items"][0]["id"]
             res = self._request(f"/api/collections/devices/records/{rec_id}", method="PATCH", data=payload)
-            return res is not None
+            if res:
+                return {"status": "ok", "message": "Cập nhật thiết bị thành công", "id": rec_id}
         else:
             res = self._request("/api/collections/devices/records", method="POST", data=payload)
-            return res is not None
+            if res:
+                return {"status": "ok", "message": "Đăng ký thiết bị mới thành công", "id": res.get("id")}
+
+        return {"status": "error", "message": "Không thể lưu thiết bị lên PocketBase"}
+
+    def get_tasks(self, mac: Optional[str] = None) -> List[Dict]:
+        """Lay danh sach cac task (co the loc theo MAC)."""
+        endpoint = "/api/collections/tasks/records?perPage=200&sort=-created"
+        if mac:
+            c_mac = clean_mac(mac)
+            query = urllib.parse.quote(f"target_mac='{c_mac}'")
+            endpoint += f"&filter=({query})"
+        res = self._request(endpoint)
+        if res and isinstance(res, dict) and "items" in res:
+            return res["items"]
+        return []
 
     def assign_project(self, macs: List[str], project: str) -> bool:
         """Gan du an cho danh sach cac thiet bi."""

@@ -63,6 +63,37 @@ class TestPocketBaseClient(unittest.TestCase):
         self.assertEqual(len(templates), 1)
         self.assertEqual(templates[0]["template_name"], "deploy_radio_36")
 
+    @patch("urllib.request.urlopen")
+    def test_get_tasks(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "items": [
+                {"task_id": "TASK_1", "status": "pending", "target_mac": "112233445566"}
+            ]
+        }).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        tasks = self.client.get_tasks(mac="11:22:33:44:55:66")
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["task_id"], "TASK_1")
+
+    @patch("urllib.request.urlopen")
+    def test_register_device_returns_dict(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"id": "rec_123"}).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self.client.register_device(
+            mac="AA:BB:CC:11:22:33",
+            anydesk_id="123456",
+            project="Dự án Test",
+            software="Radio 3.6",
+            mac_ics="AABBCC112233",
+            iot_id="IOT_999"
+        )
+        self.assertIsInstance(res, dict)
+        self.assertEqual(res.get("status"), "ok")
+
 
 if __name__ == "__main__":
     unittest.main()

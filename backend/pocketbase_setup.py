@@ -152,6 +152,10 @@ def get_default_templates() -> list[dict]:
 
 
 def get_schema_definitions() -> dict:
+    # Quy tắc bảo mật: Thao tác tạo/sửa task & template yêu cầu Secret Key hoặc Superuser
+    # DeleteRule = None (chỉ Superuser mới có quyền xóa dữ liệu, chặn triệt để xóa từ bên ngoài)
+    SECRET_RULE = "@request.headers.x_sgl_secret = 'sgl_secret_token_2026' || @request.auth.id != ''"
+
     return {
         "devices": {
             "name": "devices",
@@ -160,7 +164,7 @@ def get_schema_definitions() -> dict:
             "viewRule": "",
             "createRule": "",
             "updateRule": "",
-            "deleteRule": "",
+            "deleteRule": None,
             "fields": [
                 {"name": "mac", "type": "text", "required": True},
                 {"name": "anydesk_id", "type": "text", "required": False},
@@ -181,9 +185,9 @@ def get_schema_definitions() -> dict:
             "type": "base",
             "listRule": "",
             "viewRule": "",
-            "createRule": "",
-            "updateRule": "",
-            "deleteRule": "",
+            "createRule": SECRET_RULE,
+            "updateRule": SECRET_RULE,
+            "deleteRule": None,
             "fields": [
                 {"name": "task_id", "type": "text", "required": True},
                 {"name": "template_name", "type": "text", "required": True},
@@ -204,9 +208,9 @@ def get_schema_definitions() -> dict:
             "type": "base",
             "listRule": "",
             "viewRule": "",
-            "createRule": "",
-            "updateRule": "",
-            "deleteRule": "",
+            "createRule": SECRET_RULE,
+            "updateRule": SECRET_RULE,
+            "deleteRule": None,
             "fields": [
                 {"name": "template_name", "type": "text", "required": True},
                 {"name": "steps_json", "type": "text", "required": True},
@@ -223,8 +227,8 @@ def get_schema_definitions() -> dict:
             "listRule": "",
             "viewRule": "",
             "createRule": "",
-            "updateRule": "",
-            "deleteRule": "",
+            "updateRule": None,
+            "deleteRule": None,
             "fields": [
                 {"name": "mac", "type": "text", "required": True},
                 {"name": "timestamp", "type": "text", "required": True},

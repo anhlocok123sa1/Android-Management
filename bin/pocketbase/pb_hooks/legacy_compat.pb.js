@@ -4,7 +4,8 @@
 routerAdd("POST", "/api/sgl_webhook", (c) => {
     let data = {};
     try {
-        data = c.requestInfo().body || {};
+        const info = c.requestInfo();
+        data = Object.assign({}, info.body || {}, info.data || {});
     } catch (e) {
         data = {};
     }
@@ -82,7 +83,27 @@ routerAdd("POST", "/api/sgl_webhook", (c) => {
             $app.save(hbRecord);
         } catch (e3) {}
 
-        return c.json(200, { status: "ok", message: "Heartbeat đã ghi nhận" });
+        // Kiểm tra xem có task nào đang chờ thực thi cho MAC này không (dành cho AgentService.java)
+        let pendingTask = null;
+        try {
+            let task = $app.findFirstRecordByFilter("tasks", "target_mac = {:mac} && status = 'pending'", { mac: mac });
+            let stepsJson = "[]";
+            try {
+                let tmpl = $app.findFirstRecordByFilter("templates", "template_name = {:name}", { name: task.getString("template_name") });
+                stepsJson = tmpl.getString("steps_json");
+            } catch (te) {}
+            pendingTask = {
+                task_id: task.getString("task_id"),
+                template_name: task.getString("template_name"),
+                steps_json: stepsJson
+            };
+        } catch (tErr) {}
+
+        return c.json(200, {
+            status: "ok",
+            message: "Heartbeat đã ghi nhận",
+            pending_task: pendingTask
+        });
     }
 
     // 3. Nhận lệnh nhiệm vụ (Claim Task)
@@ -119,7 +140,8 @@ routerAdd("POST", "/api/sgl_webhook", (c) => {
     // 4. Báo cáo hoàn thành nhiệm vụ (Complete Task)
     if (action === "complete_task") {
         let taskId = (data.task_id || "").trim();
-        let status = (data.status || "completed").toLowerCase();
+        let isSuccess = data.success !== false && data.success !== "false";
+        let status = (data.status || (isSuccess ? "completed" : "failed")).toLowerCase();
         let result = data.result || "";
 
         if (!taskId) {

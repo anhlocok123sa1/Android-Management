@@ -48,6 +48,18 @@ class TestPocketBaseSetup(unittest.TestCase):
             self.assertIsInstance(parsed, list)
             self.assertGreater(len(parsed), 0)
 
+    def test_schema_api_security_rules(self):
+        schemas = get_schema_definitions()
+        for name, s in schemas.items():
+            # Không cho phép ai cũng có thể xóa (deleteRule phải là None/null - superuser only)
+            self.assertIsNone(s.get("deleteRule"), f"Collection {name} deleteRule must be None (superuser only)")
+
+        # Tasks và Templates nhạy cảm không được để createRule / updateRule công khai trống ("")
+        self.assertNotEqual(schemas["tasks"].get("createRule"), "")
+        self.assertNotEqual(schemas["tasks"].get("updateRule"), "")
+        self.assertNotEqual(schemas["templates"].get("createRule"), "")
+        self.assertNotEqual(schemas["templates"].get("updateRule"), "")
+
 
 if __name__ == "__main__":
     unittest.main()

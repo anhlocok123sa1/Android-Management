@@ -100,7 +100,7 @@ def start_cloudflare_tunnel(port: int):
         global ACTIVE_TUNNEL_URL
         for line in iter(cf_process.stdout.readline, ""):
             match = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
-            if match and not ACTIVE_TUNNEL_URL:
+            if match and match.group(0) != ACTIVE_TUNNEL_URL:
                 ACTIVE_TUNNEL_URL = match.group(0)
                 cfg = load_config()
                 cfg["active_tunnel_url"] = ACTIVE_TUNNEL_URL

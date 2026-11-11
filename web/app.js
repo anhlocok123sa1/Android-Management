@@ -513,16 +513,29 @@ function onBackendTypeChange() {
   }
 }
 
+let pbSseRetryDelay = 2000;
+let pbSseRetryTimer = null;
+
 function initPocketBaseSSE() {
   if (state.backendType !== "pocketbase") return;
   if (pbEventSource) {
     try { pbEventSource.close(); } catch(e) {}
     pbEventSource = null;
   }
+  if (pbSseRetryTimer) {
+    clearTimeout(pbSseRetryTimer);
+    pbSseRetryTimer = null;
+  }
 
   try {
     const sseUrl = `${state.pocketbaseUrl}/api/realtime`;
     pbEventSource = new EventSource(sseUrl);
+
+    pbEventSource.onopen = function() {
+      pbSseRetryDelay = 2000;
+      const syncLbl = document.getElementById("lblLastSync");
+      if (syncLbl) syncLbl.textContent = "⚡ Realtime SSE Kết nối";
+    };
 
     pbEventSource.onmessage = function(e) {
       try {
@@ -546,7 +559,16 @@ function initPocketBaseSSE() {
       } catch (err) {}
     };
 
-    pbEventSource.onerror = function() {};
+    pbEventSource.onerror = function() {
+      try { pbEventSource.close(); } catch(e) {}
+      pbEventSource = null;
+      const syncLbl = document.getElementById("lblLastSync");
+      if (syncLbl) syncLbl.textContent = `⏳ Mất kết nối SSE (thử lại sau ${Math.round(pbSseRetryDelay / 1000)}s)...`;
+      pbSseRetryTimer = setTimeout(() => {
+        pbSseRetryDelay = Math.min(pbSseRetryDelay * 1.5, 30000);
+        initPocketBaseSSE();
+      }, pbSseRetryDelay);
+    };
   } catch (err) {
     console.warn("Lỗi khởi tạo PocketBase SSE:", err);
   }

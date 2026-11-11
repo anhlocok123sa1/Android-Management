@@ -115,6 +115,63 @@ class TestLegacyHook(unittest.TestCase):
         res = self._post_webhook(payload)
         self.assertEqual(res.get("status"), "ok")
 
+    def test_heartbeat_returns_pending_task_when_available(self):
+        # Tạo task pending cho MAC A1B2C3D4E5F6
+        test_mac = "A1B2C3D4E5F6"
+        url = f"http://127.0.0.1:{TEST_PORT}/api/collections/tasks/records"
+        task_data = {
+            "task_id": "TASK_HB_TEST",
+            "template_name": "deploy_radio_36",
+            "target_mac": test_mac,
+            "status": "pending"
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(task_data).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+
+        # Gửi heartbeat từ box
+        hb_res = self._post_webhook({"action": "heartbeat", "mac": test_mac})
+        self.assertEqual(hb_res.get("status"), "ok")
+        # Phải trả về pending_task cho Android Box AgentService.java
+        self.assertIsNotNone(hb_res.get("pending_task"))
+        self.assertEqual(hb_res["pending_task"].get("task_id"), "TASK_HB_TEST")
+
+    def test_complete_task_with_success_false(self):
+        # Tạo task
+        test_mac = "223344556677"
+        task_id = "TASK_FAIL_TEST"
+        url = f"http://127.0.0.1:{TEST_PORT}/api/collections/tasks/records"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"task_id": task_id, "template_name": "deploy_radio_36", "target_mac": test_mac, "status": "claimed"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+
+        # Android Box gửi action complete_task với success: false
+        comp_res = self._post_webhook({
+            "action": "complete_task",
+            "task_id": task_id,
+            "success": False,
+            "result": "APK corrupted"
+        })
+        self.assertEqual(comp_res.get("status"), "ok")
+
+        # Kiểm tra trạng thái trong CSDL phải là failed
+        query = urllib.parse.quote(f"task_id='{task_id}'")
+        check_url = f"http://127.0.0.1:{TEST_PORT}/api/collections/tasks/records?filter=({query})"
+        with urllib.request.urlopen(check_url, timeout=5) as resp:
+            records = json.loads(resp.read().decode("utf-8")).get("items", [])
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["status"], "failed")
+
     def test_legacy_claim_and_complete_task(self):
         # 1. Tao task pending bang REST
         url = f"http://127.0.0.1:{TEST_PORT}/api/collections/tasks/records"
