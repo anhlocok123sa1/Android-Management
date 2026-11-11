@@ -162,6 +162,9 @@ def print_box_label(anydesk_id: str, iot_id: str, printer_name: str = PRINTER_NA
     - iot_id: Mã IoT (VD: 11250)
     - Trả về: (True, "Thành công") hoặc (False, "Lỗi...")
     """
+    if os.environ.get("SGL_MOCK_PRINT") == "1":
+        return True, f"[MOCK] Đã in tem giả lập (AnyDesk: {anydesk_id} | IoT: {iot_id})"
+
     try:
         if not ensure_printer_installed(printer_name):
             return False, f"Không tìm thấy máy in '{printer_name}' trên Windows và không thể tự động kết nối USB001."
