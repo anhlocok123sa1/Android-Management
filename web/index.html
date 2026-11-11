@@ -442,27 +442,9 @@
         <div class="form-row">
           <label>🌐 Link Máy In Cục Bộ (Cloudflare Tunnel HTTPS / Localhost):</label>
           <input type="text" id="txtPrintServerUrl" class="input-control mono" placeholder="VD: https://xxxx.trycloudflare.com hoặc http://localhost:8080" />
-          <small style="color:var(--accent-cyan); font-size:11px; margin-top:4px; display:block;">
-            💡 Khi bạn bấm <b>Lưu Cấu Hình</b>, link máy in này sẽ tự động được lưu lên Google Sheet để tất cả người dùng khác vào web đều tự động nhận diện được máy in tại xưởng!
+          <small style="color:var(--text-muted); font-size:11px; margin-top:4px; display:block;">
+            Dán link HTTPS do Cloudflare Tunnel tạo ra trên máy tính xưởng để mọi người dùng Web GitHub có thể in từ xa.
           </small>
-        </div>
-
-        <div style="margin-top:14px; padding:12px; background:rgba(0, 240, 255, 0.05); border:1px solid rgba(0, 240, 255, 0.25); border-radius:6px;">
-          <div style="font-weight:600; color:var(--accent-cyan); font-size:13px; margin-bottom:6px;">
-            💻 Mở AnyDesk từ Web khi chỉ tải bản Portable về mục Downloads:
-          </div>
-          <div style="font-size:12px; color:var(--text-secondary); line-height:1.5;">
-            Nếu máy tính của bạn hoặc đồng nghiệp bấm nút AnyDesk trên Web mà chưa tự bật (do chỉ tải file <code>AnyDesk.exe</code> về thư mục Downloads mà chưa Cài đặt), bạn có 2 cách cực nhanh:
-            <ul style="margin:6px 0 6px 18px; padding:0;">
-              <li><b>Cách 1 (Nhanh nhất):</b> Mở file AnyDesk trong Downloads lên &rarr; bấm vào dòng <b>"Cài đặt AnyDesk trên máy tính này"</b> (Install AnyDesk) &rarr; bấm Đồng ý cài đặt (mất 3 giây).</li>
-              <li><b>Cách 2:</b> Tải công cụ kích hoạt 1-click bên dưới về nhấp đúp chạy là xong (không cần quyền Admin):</li>
-            </ul>
-          </div>
-          <div style="margin-top:8px;">
-            <a href="Kich_Hoat_AnyDesk_Web.bat" download="Kich_Hoat_AnyDesk_Web.bat" class="btn btn-sm btn-outline" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px; color:var(--accent-cyan); border-color:var(--accent-cyan);">
-              ⚡ Tải công cụ 1-Click: Kich_Hoat_AnyDesk_Web.bat
-            </a>
-          </div>
         </div>
 
         <div style="display:flex; gap:10px; margin-top:18px;">
@@ -613,53 +595,6 @@
         <button class="btn btn-primary" id="btnConfirmBulkOld" onclick="confirmBulkImportOldProject()">
           📥 Tạo Sheet Dự Án &amp; Nạp Mã AnyDesk
         </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===================================================================== -->
-  <!-- MODAL 4: KẾT NỐI ANYDESK THÔNG MINH                                   -->
-  <!-- ===================================================================== -->
-  <div class="modal-backdrop" id="modalConnectAnyDesk">
-    <div class="modal-box" style="max-width:480px;">
-      <div class="modal-title">💻 Kết Nối AnyDesk Tới Box</div>
-      
-      <div style="background:rgba(0, 255, 65, 0.05); border:1px solid rgba(0, 255, 65, 0.3); border-radius:8px; padding:14px; margin-bottom:14px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <span style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px;">Mã AnyDesk Box:</span>
-          <button class="btn btn-sm btn-primary" onclick="copyModalAnyDeskId()">📋 Chép Mã</button>
-        </div>
-        <div id="lblModalAnydeskId" class="mono" style="font-size:22px; font-weight:800; color:var(--accent-green); letter-spacing:2px; word-break:break-all;">
-          ---
-        </div>
-      </div>
-
-      <div style="background:rgba(0, 240, 255, 0.05); border:1px solid rgba(0, 240, 255, 0.25); border-radius:8px; padding:12px 14px; margin-bottom:16px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px;">Mật Khẩu Mặc Định:</span>
-          <button class="btn btn-sm btn-cyan" onclick="copyModalAnyDeskPass()">🔑 Chép Mật Khẩu</button>
-        </div>
-        <div id="lblModalAnydeskPass" class="mono" style="font-size:16px; font-weight:700; color:var(--accent-cyan); margin-top:4px;">
-          ---
-        </div>
-      </div>
-
-      <div style="font-size:12px; color:var(--text-secondary); line-height:1.5; background:var(--bg-card); border:1px dashed var(--border-color); border-radius:6px; padding:10px;">
-        <div style="color:var(--accent-amber); font-weight:600; margin-bottom:4px;">⚠️ Trình duyệt đang gửi lệnh mở AnyDesk...</div>
-        Nếu AnyDesk chưa tự bật lên (do bạn chỉ tải AnyDesk về thư mục Downloads mà chưa Cài đặt):
-        <div style="margin-top:6px; color:var(--text-primary);">
-          👉 Bạn chỉ cần mở file <b>AnyDesk.exe</b> trong thư mục <b>Downloads</b>, rồi nhấn <b>Ctrl + V</b> để dán mã vào là xong!
-        </div>
-        <div style="margin-top:6px;">
-          💡 <i>Mẹo: Mở AnyDesk &rarr; bấm <b>"Cài đặt AnyDesk trên máy tính này"</b> (mất 3s) để lần sau bấm nút web là tự mở luôn!</i>
-        </div>
-      </div>
-
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px;">
-        <a href="Kich_Hoat_AnyDesk_Web.bat" download="Kich_Hoat_AnyDesk_Web.bat" class="btn btn-sm btn-outline" style="text-decoration:none; color:var(--accent-cyan); border-color:var(--accent-cyan);">
-          ⚡ Tải file kích hoạt 1-Click
-        </a>
-        <button class="btn btn-primary" onclick="closeModal('modalConnectAnyDesk')">Đã Hiểu / Đóng</button>
       </div>
     </div>
   </div>
