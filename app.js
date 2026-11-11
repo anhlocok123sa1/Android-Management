@@ -11,6 +11,7 @@ let state = {
   webhookUrl: localStorage.getItem("sgl_webhook_url") || DEFAULT_WEBHOOK_URL,
   sheetUrl: localStorage.getItem("sgl_sheet_url") || DEFAULT_SHEET_URL,
   adPass: localStorage.getItem("sgl_ad_pass") || "",
+  printServerUrl: localStorage.getItem("sgl_print_server_url") || "",
   devices: [],
   templates: [],
   tasks: [],
@@ -21,40 +22,112 @@ let state = {
 const DEFAULT_TEMPLATES = [
   {
     template_name: "deploy_radio_36",
-    description: "Chốt dự án Radio 3.6 (Đăng xuất tài khoản test, giữ app 3.6)",
+    description: "Cài đặt & Nâng cấp Radio 3.6 (Tải trực tiếp & cài đè qua Root)",
     steps_json: JSON.stringify([
-      { action: "shell_cmd", params: { cmd: "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation" } },
-      { action: "report_field", params: { field: "software", value: "Radio 3.6" } }
+      {
+        action: "shell_cmd",
+        params: {
+          cmd: "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation ; /vendor/xbin/curl -L -k -o /data/local/tmp/Radio3.6.apk \"https://drive.usercontent.google.com/download?id=1fU02IfohDL0FnLFmkz1TZ3tlSrpDfRdD&export=download&confirm=t\" && ls -l /data/local/tmp/Radio3.6.apk && pm install -r -g /data/local/tmp/Radio3.6.apk && rm -f /data/local/tmp/Radio3.6.apk"
+        }
+      },
+      {
+        action: "start_app",
+        params: {
+          package: "vn.phitn.app.radiostation",
+          activity: "vn.phitn.app.radiostation.ui.SplashActivity"
+        }
+      },
+      {
+        action: "report_field",
+        params: {
+          field: "software",
+          value: "Radio 3.6"
+        }
+      }
     ], null, 2)
   },
   {
     template_name: "deploy_vnpt_ics",
-    description: "Chuyển sang VNPT ICS (Gỡ 3.6, cài ICS, tự động lấy MAC ICS lên Sheet)",
+    description: "Chuyển sang VNPT ICS (Tải trực tiếp, cài ICS, tự động lấy MAC ICS lên Sheet)",
     steps_json: JSON.stringify([
-      { action: "uninstall_pkg", params: { package: "vn.phitn.app.radiostation" } },
-      { action: "install_apk", params: { file: "ics-android-box (2.0.0).apk" } },
-      { action: "start_app", params: { package: "com.app.ics_content_management", fallback_package: "vnpt.smartcomm.radio", activity: "vnpt.smartcomm.radio.activity.SplashActivity" } },
-      { action: "extract_ics_mac", params: { package: "com.app.ics_content_management", fallback_package: "vnpt.smartcomm.radio" } },
-      { action: "report_field", params: { field: "software", value: "VNPT ICS" } }
+      {
+        action: "shell_cmd",
+        params: {
+          cmd: "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation ; /vendor/xbin/curl -L -k -o /data/local/tmp/ics.apk \"https://drive.usercontent.google.com/download?id=1Qozu11xJNhvwSFlTPfC8rpFa8Zy8gLvF&export=download&confirm=t\" && ls -l /data/local/tmp/ics.apk && pm install -r -g /data/local/tmp/ics.apk && rm -f /data/local/tmp/ics.apk"
+        }
+      },
+      {
+        action: "start_app",
+        params: {
+          package: "com.app.ics_content_management",
+          activity: "vn.vnpt.digo.ics.MainActivity"
+        }
+      },
+      {
+        action: "extract_ics_mac",
+        params: {
+          package: "com.app.ics_content_management"
+        }
+      },
+      {
+        action: "report_field",
+        params: {
+          field: "software",
+          value: "VNPT ICS"
+        }
+      }
     ], null, 2)
   },
   {
     template_name: "deploy_radio_166",
-    description: "Chuyển sang Radio 1.66 (Gỡ 3.6, cài Radio 1.66)",
+    description: "Chuyển sang Radio 1.66 (Tải trực tiếp & cài đè qua Root)",
     steps_json: JSON.stringify([
-      { action: "uninstall_pkg", params: { package: "vn.phitn.app.radiostation" } },
-      { action: "install_apk", params: { file: "radio.apk" } },
-      { action: "report_field", params: { field: "software", value: "Radio 1.66" } }
+      {
+        action: "shell_cmd",
+        params: {
+          cmd: "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation ; /vendor/xbin/curl -L -k -o /data/local/tmp/radio.apk \"https://drive.usercontent.google.com/download?id=1fa3-qqFUJ6d9sCuLjidHAI6eom1mlxJ5&export=download&confirm=t\" && ls -l /data/local/tmp/radio.apk && pm install -r -d -g /data/local/tmp/radio.apk && rm -f /data/local/tmp/radio.apk"
+        }
+      },
+      {
+        action: "start_app",
+        params: {
+          package: "vn.phitn.app.radiostation",
+          activity: "vn.phitn.app.radiostation.ui.SplashActivity"
+        }
+      },
+      {
+        action: "report_field",
+        params: {
+          field: "software",
+          value: "Radio 1.66"
+        }
+      }
     ], null, 2)
   },
   {
     template_name: "deploy_radio_20",
-    description: "Nâng cấp Radio 2.0 (Đọc thông tin cấu hình từ Google Sheet)",
+    description: "Nâng cấp Radio 2.0 (Tải trực tiếp & cài đè sạch qua Root, cấu hình Radio 2.0)",
     steps_json: JSON.stringify([
-      { action: "uninstall_pkg", params: { package: "vn.phitn.app.radiostation" } },
-      { action: "install_apk", params: { file: "Radio2.0.apk" } },
-      { action: "fetch_config", params: { sheet: "Config_Radio20", key: "mac" } },
-      { action: "report_field", params: { field: "software", value: "Radio 2.0" } }
+      {
+        action: "shell_cmd",
+        params: {
+          cmd: "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation ; /vendor/xbin/curl -L -k -o /data/local/tmp/Radio2.0.apk \"https://drive.usercontent.google.com/download?id=1bLxqszxg5DficlG02cWZFjmGLxbMhiFT&export=download&confirm=t\" && ls -l /data/local/tmp/Radio2.0.apk && pm install -r -g /data/local/tmp/Radio2.0.apk && rm -f /data/local/tmp/Radio2.0.apk"
+        }
+      },
+      {
+        action: "start_app",
+        params: {
+          package: "vn.phitn.app.radiostation",
+          activity: "vn.phitn.app.radiostation.ui.SplashActivity"
+        }
+      },
+      {
+        action: "report_field",
+        params: {
+          field: "software",
+          value: "Radio 2.0"
+        }
+      }
     ], null, 2)
   }
 ];
@@ -247,6 +320,9 @@ function unlockApplication() {
   document.getElementById("txtWebhookUrl").value = state.webhookUrl;
   document.getElementById("txtSheetUrl").value = state.sheetUrl;
   document.getElementById("txtDefaultAdPass").value = state.adPass;
+  if (document.getElementById("txtPrintServerUrl")) {
+    document.getElementById("txtPrintServerUrl").value = state.printServerUrl;
+  }
   document.getElementById("btnOpenSheetTop").href = state.sheetUrl;
 
   refreshAllData();
@@ -791,6 +867,9 @@ function renderDeviceTable() {
             </button>
             <button class="btn btn-outline btn-sm" onclick="quickAssignSingle('${safeMac}')" title="Đổi dự án">
               📁 Dự án
+            </button>
+            <button class="btn btn-success btn-sm" onclick="printDeviceLabel('${safeAd}', '${safeIot}')" title="In tem dán vỏ Box (AiYin D11S)">
+              🖨️ In Tem
             </button>
           </div>
         </td>
@@ -1425,6 +1504,93 @@ function exportCurrentViewCsv() {
 }
 
 // ============================================================================
+// REMOTE THERMAL PRINT (AIYIN D11S VIA CLOUDFLARE TUNNEL / LOCALHOST)
+// ============================================================================
+async function printDeviceLabel(anydeskId, iotId) {
+  const adClean = String(anydeskId || "").trim();
+  if (!adClean || adClean === "Chưa có") {
+    showToast("❌ Box chưa có AnyDesk ID để tạo mã vạch in!");
+    return false;
+  }
+
+  let finalIot = String(iotId || "").trim();
+  if (!finalIot || finalIot === "-") {
+    const userVal = prompt(`Box AnyDesk: ${adClean}\nNhập Mã IoT để in lên tem (VD: 11250):`, "");
+    if (userVal === null) return false;
+    finalIot = userVal.trim();
+  }
+
+  // Xác định địa chỉ máy in (Print Server)
+  let targetServer = (state.printServerUrl || "").trim();
+  if (!targetServer) {
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      targetServer = window.location.origin;
+    } else {
+      const inputUrl = prompt(
+        "Chưa cấu hình Link Máy In Cục Bộ (Cloudflare Tunnel HTTPS)!\nVui lòng dán link Cloudflare do máy tính xưởng cung cấp (VD: https://xxxx.trycloudflare.com):",
+        ""
+      );
+      if (!inputUrl || !inputUrl.trim()) return false;
+      targetServer = inputUrl.trim().replace(/\/+$/, "");
+      state.printServerUrl = targetServer;
+      localStorage.setItem("sgl_print_server_url", targetServer);
+      if (document.getElementById("txtPrintServerUrl")) {
+        document.getElementById("txtPrintServerUrl").value = targetServer;
+      }
+    }
+  }
+  targetServer = targetServer.replace(/\/+$/, "");
+
+  showToast(`⏳ Đang gửi lệnh in tem: AnyDesk ${adClean} (IoT: ${finalIot || "---"})...`);
+
+  try {
+    const resp = await fetch(`${targetServer}/api/print_label`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ anydesk_id: adClean, iot_id: finalIot })
+    });
+    const result = await resp.json();
+    if (result.status === "ok") {
+      showToast(`🖨️ In tem thành công cho Box ${adClean}!`);
+      return true;
+    } else {
+      showToast(`❌ Lỗi máy in: ${result.message || "Không thể in"}`);
+      return false;
+    }
+  } catch (err) {
+    showToast(`❌ Không thể kết nối tới Máy in (${targetServer}): ${err.message}`);
+    return false;
+  }
+}
+
+async function printSelectedDevices() {
+  if (!state.selectedMacs || state.selectedMacs.size === 0) {
+    showToast("⚠️ Vui lòng tick chọn [X] ít nhất 1 box để in tem!");
+    return;
+  }
+
+  const selectedList = state.devices.filter(d => state.selectedMacs.has(d.mac));
+  if (selectedList.length === 0) return;
+
+  if (!confirm(`Bạn có chắc chắn muốn in tem cho ${selectedList.length} box đã chọn qua máy in AiYin D11S?`)) {
+    return;
+  }
+
+  let count = 0;
+  for (const dev of selectedList) {
+    const ad = dev.anydesk_id || "";
+    const iot = dev.iot_id || "";
+    if (ad && ad !== "Chưa có") {
+      const ok = await printDeviceLabel(ad, iot);
+      if (ok) count++;
+      // Delay nhỏ giữa các lệnh in
+      await new Promise(r => setTimeout(r, 600));
+    }
+  }
+  showToast(`✅ Đã gửi lệnh in cho ${count} / ${selectedList.length} box!`);
+}
+
+// ============================================================================
 // SETTINGS
 // ============================================================================
 function saveSettings() {
@@ -1432,6 +1598,16 @@ function saveSettings() {
   state.webhookUrl = (document.getElementById("txtWebhookUrl").value || DEFAULT_WEBHOOK_URL).trim();
   state.sheetUrl = (document.getElementById("txtSheetUrl").value || DEFAULT_SHEET_URL).trim();
   state.adPass = (document.getElementById("txtDefaultAdPass").value || defaultAdPass).trim();
+
+  const printUrlInput = document.getElementById("txtPrintServerUrl");
+  if (printUrlInput) {
+    state.printServerUrl = printUrlInput.value.trim().replace(/\/+$/, "");
+    if (state.printServerUrl) {
+      localStorage.setItem("sgl_print_server_url", state.printServerUrl);
+    } else {
+      localStorage.removeItem("sgl_print_server_url");
+    }
+  }
 
   localStorage.setItem("sgl_webhook_url", state.webhookUrl);
   localStorage.setItem("sgl_sheet_url", state.sheetUrl);
@@ -1450,13 +1626,18 @@ function resetDefaultSettings() {
   localStorage.removeItem("sgl_webhook_url");
   localStorage.removeItem("sgl_sheet_url");
   localStorage.removeItem("sgl_ad_pass");
+  localStorage.removeItem("sgl_print_server_url");
   state.webhookUrl = DEFAULT_WEBHOOK_URL;
   state.sheetUrl = DEFAULT_SHEET_URL;
   state.adPass = getDecryptedDefaultAdPass();
+  state.printServerUrl = "";
 
   document.getElementById("txtWebhookUrl").value = state.webhookUrl;
   document.getElementById("txtSheetUrl").value = state.sheetUrl;
   document.getElementById("txtDefaultAdPass").value = state.adPass;
+  if (document.getElementById("txtPrintServerUrl")) {
+    document.getElementById("txtPrintServerUrl").value = "";
+  }
   document.getElementById("btnOpenSheetTop").href = state.sheetUrl;
 
   showToast("🔄 Đã khôi phục cấu hình mặc định!");
