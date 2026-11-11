@@ -19,6 +19,19 @@ let state = {
   filteredDevices: []
 };
 
+// Đọc tham số URL chia sẻ nhanh nếu có: ?printer=https://...
+try {
+  const urlParams = new URLSearchParams(window.location.search);
+  const qPrinter = urlParams.get("printer") || urlParams.get("print_url");
+  if (qPrinter) {
+    const cleanUrl = qPrinter.trim().replace(/\/+$/, "");
+    if (cleanUrl.startsWith("http")) {
+      state.printServerUrl = cleanUrl;
+      localStorage.setItem("sgl_print_server_url", cleanUrl);
+    }
+  }
+} catch (e) {}
+
 const DEFAULT_TEMPLATES = [
   {
     template_name: "deploy_radio_36",
@@ -534,6 +547,23 @@ async function refreshAllData() {
 
     if (tplRes && Array.isArray(tplRes.templates) && tplRes.templates.length > 0) {
       state.templates = tplRes.templates;
+      // Tự động đồng bộ cấu hình máy in từ Cloud nếu client chưa có hoặc nếu Cloud có URL mới
+      const printerTpl = tplRes.templates.find(t => t.template_name === "sgl_printer_config");
+      if (printerTpl) {
+        try {
+          const parsed = JSON.parse(printerTpl.steps_json);
+          const cloudUrl = parsed && parsed[0] && parsed[0].params && parsed[0].params.url;
+          if (cloudUrl && cloudUrl.startsWith("http")) {
+            const cur = (state.printServerUrl || "").trim();
+            if (!cur || (cur.includes("trycloudflare.com") && cur !== cloudUrl)) {
+              state.printServerUrl = cloudUrl;
+              localStorage.setItem("sgl_print_server_url", cloudUrl);
+              const txtInput = document.getElementById("txtPrintServerUrl");
+              if (txtInput) txtInput.value = cloudUrl;
+            }
+          }
+        } catch (e) {}
+      }
     } else {
       state.templates = DEFAULT_TEMPLATES;
     }
@@ -922,7 +952,7 @@ async function copyText(text, msg) {
 }
 
 // ============================================================================
-// ANYDESK LAUNCHER (LOCAL HELPER + URI FALLBACK)
+// ANYDESK LAUNCHER (LOCAL HELPER + MODAL QUICK-CONNECT + URI FALLBACK)
 // ============================================================================
 async function connectAnyDesk(adId) {
   if (!adId || adId === "Chưa có") {
@@ -935,12 +965,20 @@ async function connectAnyDesk(adId) {
     return;
   }
 
-  // Luôn chép sẵn mật khẩu vào clipboard
+  // 1. Luôn sao chép mã AnyDesk ID vào Clipboard để người dùng dán ngay vào AnyDesk
   try {
-    await navigator.clipboard.writeText(state.adPass);
+    await navigator.clipboard.writeText(cleanId);
   } catch (e) {}
 
-  // Thử gọi Local Python Web Server (/api/open_anydesk) nếu đang chạy trên PC
+  // 2. Mở Modal trợ giúp kết nối AnyDesk (có sẵn nút sao chép Mã và Mật khẩu)
+  const lblId = document.getElementById("lblModalAnydeskId");
+  const lblPass = document.getElementById("lblModalAnydeskPass");
+  if (lblId) lblId.textContent = cleanId;
+  if (lblPass) lblPass.textContent = state.adPass || "(Mặc định của Box)";
+  const modal = document.getElementById("modalConnectAnyDesk");
+  if (modal) modal.classList.add("open");
+
+  // 3. Thử gọi Local Python Web Server (/api/open_anydesk) nếu đang chạy trực tiếp trên máy này
   try {
     const resp = await fetch("/api/open_anydesk", {
       method: "POST",
@@ -950,16 +988,32 @@ async function connectAnyDesk(adId) {
     if (resp.ok) {
       const data = await resp.json();
       if (data.status === "ok") {
-        showToast(`🚀 Đang mở AnyDesk ${cleanId} (Đã tự nạp mật khẩu ${state.adPass})`);
+        showToast(`🚀 Đã mở AnyDesk ${cleanId} (Đã tự nạp mật khẩu)`);
         return;
       }
     }
   } catch (err) {
-    // Nếu đang mở file trực tiếp hoặc qua GitHub Pages -> dùng URI protocol anydesk:
+    // Nếu đang mở trên GitHub Pages -> kích hoạt giao thức URI anydesk:
   }
 
-  showToast(`💻 Đang mở AnyDesk ${cleanId} (Đã chép sẵn mật khẩu ${state.adPass} vào Clipboard)`);
+  showToast(`💻 Đã sao chép mã AnyDesk ${cleanId} vào Clipboard & gửi lệnh mở AnyDesk...`);
   window.location.href = `anydesk:${cleanId}`;
+}
+
+function copyModalAnyDeskId() {
+  const elem = document.getElementById("lblModalAnydeskId");
+  const id = elem ? elem.textContent.trim() : "";
+  if (id && id !== "---") {
+    copyText(id, `✔ Đã chép mã AnyDesk: ${id}`);
+  }
+}
+
+function copyModalAnyDeskPass() {
+  const elem = document.getElementById("lblModalAnydeskPass");
+  const pass = elem ? elem.textContent.trim() : state.adPass;
+  if (pass && pass !== "---") {
+    copyText(pass, `🔑 Đã chép mật khẩu: ${pass}`);
+  }
 }
 
 // ============================================================================
@@ -1604,6 +1658,17 @@ function saveSettings() {
     state.printServerUrl = printUrlInput.value.trim().replace(/\/+$/, "");
     if (state.printServerUrl) {
       localStorage.setItem("sgl_print_server_url", state.printServerUrl);
+      // Tự động đồng bộ lên Google Sheet để tất cả người dùng khác đều tự động nhận diện máy in
+      apiPost({
+        action: "save_template",
+        template_name: "sgl_printer_config",
+        steps_json: JSON.stringify([{ action: "printer_server", params: { url: state.printServerUrl } }]),
+        description: "Cấu hình máy in nhãn nhiệt AiYin D11S từ xa (Cloudflare Tunnel)"
+      }).then(res => {
+        if (res && res.status === "ok") {
+          showToast("☁️ Đã đồng bộ máy in lên Cloud cho tất cả người dùng!");
+        }
+      }).catch(err => console.warn("Lỗi đồng bộ printer template:", err));
     } else {
       localStorage.removeItem("sgl_print_server_url");
     }
