@@ -1262,9 +1262,6 @@ function renderDeviceTable() {
             <button class="btn btn-primary btn-sm" onclick="connectAnyDesk('${safeAd}')" title="Mở AnyDesk & tự nạp mật khẩu ${state.adPass}">
               💻 AnyDesk
             </button>
-            <button class="btn btn-cyan btn-sm" onclick="openEditIotModal('${safeMac}', '${safeAd}', '${escapeHtml(d.iot_id || '')}')" title="Chỉnh sửa Mã IoT">
-              🏷️ Sửa IoT
-            </button>
             <button class="btn btn-outline btn-sm" onclick="quickAssignSingle('${safeMac}')" title="Đổi dự án">
               📁 Dự án
             </button>
