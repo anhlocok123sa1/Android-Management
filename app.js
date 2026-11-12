@@ -1239,12 +1239,12 @@ function renderDeviceTable() {
           </span>
         </td>
         <td class="mono">
-          <div style="display:inline-flex; align-items:center; gap:6px; cursor:pointer;" onclick="openEditIotModal('${safeMac}', '${safeAd}', '${escapeHtml(d.iot_id || '')}')" title="Bấm để chỉnh sửa Mã IoT">
+          <div style="display:inline-flex; align-items:center; gap:6px;">
             ${iotId !== "-" 
-              ? `<span class="copy-chip" style="color:var(--accent-cyan); font-weight:700;">${safeIot}</span>` 
-              : `<span style="color:var(--text-muted); font-size:12px; border-bottom:1px dashed var(--text-muted);">➕ Thêm IoT</span>`
+              ? `<span class="copy-chip" style="color:var(--accent-cyan); font-weight:700;" onclick="copyText('${safeIot}', 'Đã chép Mã IoT: ${safeIot}')" title="Bấm để sao chép Mã IoT">${safeIot}</span>
+                 <span role="button" tabindex="0" style="cursor:pointer; font-size:13px; opacity:0.75; padding:2px 4px; border-radius:4px;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.75'" onclick="openEditIotModal('${safeMac}', '${safeAd}', '${escapeHtml(d.iot_id || '')}')" title="Bấm cây bút để sửa Mã IoT">✏️</span>` 
+              : `<span role="button" tabindex="0" style="cursor:pointer; color:var(--text-muted); font-size:12px; border-bottom:1px dashed var(--text-muted); padding:1px 4px;" onclick="openEditIotModal('${safeMac}', '${safeAd}', '')" title="Bấm để thêm Mã IoT">➕ Thêm IoT</span>`
             }
-            <span style="font-size:12px; opacity:0.65;" title="Chỉnh sửa Mã IoT">✏️</span>
           </div>
         </td>
         <td><span class="badge badge-proj">${escapeHtml(proj)}</span></td>
