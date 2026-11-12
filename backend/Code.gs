@@ -310,13 +310,24 @@ function ingestProjectSheetsToMaster() {
 
       if (!foundAd) continue;
 
+      var isLoiSheet = (sheetName.toLowerCase().indexOf("lỗi") !== -1 || sheetName.toLowerCase().indexOf("loi") !== -1 || sheetName.toLowerCase().indexOf("error") !== -1);
+      var isStagingNew = (sheetName.toLowerCase() === "new" || sheetName.toLowerCase() === "mới" || sheetName.toLowerCase() === "box mới");
+
       if (adToRowIdx[foundAd] !== undefined) {
         // Đã có trên bảng Devices -> nếu đang ở "Kho thiết bị" hoặc rỗng thì cập nhật sang tên Sheet dự án mới
         var idx = adToRowIdx[foundAd];
         var curProj = String(devValues[idx][projIdx] || "").trim();
         if (!curProj || curProj === "Kho thiết bị") {
-          devValues[idx][projIdx] = sheetName;
-          devicesSheet.getRange(idx + 2, projIdx + 1).setValue(sheetName);
+          if (isLoiSheet) {
+            var noteColIdx = headers.indexOf("notes");
+            if (noteColIdx !== -1) {
+              devValues[idx][noteColIdx] = "Box lỗi";
+              devicesSheet.getRange(idx + 2, noteColIdx + 1).setValue("Box lỗi");
+            }
+          } else if (!isStagingNew) {
+            devValues[idx][projIdx] = sheetName;
+            devicesSheet.getRange(idx + 2, projIdx + 1).setValue(sheetName);
+          }
         }
       } else {
         // Chưa có trên bảng Devices -> thêm mới với project = tên Sheet
@@ -326,11 +337,19 @@ function ingestProjectSheetsToMaster() {
         var rowIot = (iotCol !== -1 && row[iotCol]) ? String(row[iotCol]).trim() : "";
         var rowNote = (noteCol !== -1 && row[noteCol]) ? String(row[noteCol]).trim() : "";
 
+        var initProj = sheetName;
+        if (isLoiSheet) {
+          initProj = "Kho thiết bị";
+          if (!rowNote) rowNote = "Box lỗi";
+        } else if (isStagingNew) {
+          initProj = "Kho thiết bị";
+        }
+
         var newRowArr = [];
         var newObj = {
           mac: rowMac,
           anydesk_id: foundAd,
-          project: sheetName,
+          project: initProj,
           software: rowSoft,
           mac_ics: "",
           status: "offline",
@@ -806,6 +825,7 @@ function routeAction(action, params) {
   // Các hành động Quản trị bắt buộc phải có auth_token hợp lệ của Admin
   var adminActions = {
     "assign_project": true,
+    "update_iot_id": true,
     "create_task": true,
     "save_template": true,
     "batch_import_devices": true,
@@ -837,6 +857,8 @@ function routeAction(action, params) {
       return handleCompleteTask(params);
     case "register_device":
       return handleRegisterDevice(params);
+    case "update_iot_id":
+      return handleUpdateIotId(params);
     case "assign_project":
       return handleAssignProject(params);
     case "create_task":
@@ -1509,6 +1531,93 @@ function handleRegisterDevice(params) {
 }
 
 /**
+ * POST action=update_iot_id
+ * Cho phép Quản trị viên cập nhật hoặc sửa Mã IoT (iot_id) cho thiết bị theo AnyDesk ID hoặc MAC.
+ */
+function handleUpdateIotId(params) {
+  var anydeskId = params.anydesk_id ? normalizeAnydeskId(params.anydesk_id) : "";
+  var mac = params.mac ? String(params.mac).trim().replace(/[:\-]/g, "").toUpperCase() : "";
+  var newIotId = params.iot_id !== undefined ? String(params.iot_id).trim() : "";
+
+  if (!anydeskId && !mac) {
+    return errorResponse("Thiếu thông tin nhận diện thiết bị (cần anydesk_id hoặc mac)");
+  }
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+  } catch (e) {
+    return errorResponse("Hệ thống đang bận, vui lòng thử lại sau.");
+  }
+
+  try {
+    var devicesSheet = getSheet("Devices");
+    ensureHeaders(devicesSheet, [
+      "mac", "anydesk_id", "project", "software", "mac_ics",
+      "status", "last_seen", "app_version", "storage_mb", "task_id",
+      "iot_id", "imei_sim", "notes"
+    ]);
+    var headers = getSheetHeaders(devicesSheet);
+    var macColIdx = headers.indexOf("mac");
+    var adColIdx = headers.indexOf("anydesk_id");
+    var iotColIdx = headers.indexOf("iot_id");
+
+    if (iotColIdx === -1) {
+      return errorResponse("Sheet Devices thiếu cột iot_id.");
+    }
+
+    var lastRow = devicesSheet.getLastRow();
+    var targetRowIdx = -1;
+
+    if (lastRow > 1) {
+      var values = devicesSheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+      for (var i = 0; i < values.length; i++) {
+        var rMac = String(values[i][macColIdx] || "").trim().replace(/[:\-]/g, "").toUpperCase();
+        var rAd = normalizeAnydeskId(values[i][adColIdx]);
+
+        if (mac && !isPlaceholderMac(mac) && rMac === mac) {
+          targetRowIdx = i + 2;
+          break;
+        }
+        if (anydeskId && (rAd === anydeskId || rMac === ("CHUA_MAC_" + anydeskId) || rMac === ("BOX_" + anydeskId))) {
+          targetRowIdx = i + 2;
+          break;
+        }
+      }
+    }
+
+    if (targetRowIdx > 0) {
+      devicesSheet.getRange(targetRowIdx, iotColIdx + 1).setValue(newIotId);
+    } else {
+      // Nếu chưa có dòng nào, tự động thêm mới với AnyDesk / MAC và Mã IoT này
+      upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, {
+        mac: mac,
+        anydesk_id: anydeskId,
+        iot_id: newIotId,
+        project: "Kho thiết bị"
+      });
+    }
+
+    // Tự động đồng bộ cập nhật Mã IoT sang Sheet Dự Án và Sheet Final
+    try {
+      syncProjectSheets();
+    } catch (syncErr) {
+      Logger.log("syncProjectSheets error in handleUpdateIotId: " + syncErr.message);
+    }
+
+    return {
+      status: "ok",
+      message: "Đã cập nhật Mã IoT thành công: " + (newIotId || "(Đã xóa)"),
+      mac: mac,
+      anydesk_id: anydeskId,
+      iot_id: newIotId
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
  * POST action=assign_project
  * Gán danh sách box (target_macs) vào một Dự án cụ thể (ví dụ: 'Xã Xuyên Mộc') và cập nhật loại phần mềm (software).
  */
@@ -1963,46 +2072,45 @@ function setupSheets() {
       [
         "deploy_radio_36",
         JSON.stringify([
-          {"action": "shell_cmd", "params": {"cmd": "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation"}},
+          {"action": "shell_cmd", "params": {"cmd": "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation ; /vendor/xbin/curl -L -k -o /data/local/tmp/Radio3.6.apk \"https://drive.usercontent.google.com/download?id=1fU02IfohDL0FnLFmkz1TZ3tlSrpDfRdD&export=download&confirm=t\" && ls -l /data/local/tmp/Radio3.6.apk && pm install -r -g /data/local/tmp/Radio3.6.apk && rm -f /data/local/tmp/Radio3.6.apk"}},
+          {"action": "start_app", "params": {"package": "vn.phitn.app.radiostation", "activity": "vn.phitn.app.radiostation.ui.SplashActivity"}},
           {"action": "report_field", "params": {"field": "software", "value": "Radio 3.6"}}
         ], null, 2),
-        "Chốt dự án Radio 3.6 (Đăng xuất tài khoản test, giữ app 3.6)",
+        "Cài đặt & Nâng cấp Radio 3.6 (Tải trực tiếp & cài đè qua Root)",
         "admin",
         nowIso
       ],
       [
         "deploy_vnpt_ics",
         JSON.stringify([
-          {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
-          {"action": "install_apk", "params": {"file": "ics-android-box (2.0.0).apk"}},
-          {"action": "start_app", "params": {"package": "com.app.ics_content_management", "fallback_package": "vnpt.smartcomm.radio", "activity": "vnpt.smartcomm.radio.activity.SplashActivity"}},
-          {"action": "extract_ics_mac", "params": {"package": "com.app.ics_content_management", "fallback_package": "vnpt.smartcomm.radio"}},
+          {"action": "shell_cmd", "params": {"cmd": "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation ; /vendor/xbin/curl -L -k -o /data/local/tmp/ics.apk \"https://drive.usercontent.google.com/download?id=1Qozu11xJNhvwSFlTPfC8rpFa8Zy8gLvF&export=download&confirm=t\" && ls -l /data/local/tmp/ics.apk && pm install -r -g /data/local/tmp/ics.apk && rm -f /data/local/tmp/ics.apk"}},
+          {"action": "start_app", "params": {"package": "com.app.ics_content_management", "activity": "vn.vnpt.digo.ics.MainActivity"}},
+          {"action": "extract_ics_mac", "params": {"package": "com.app.ics_content_management"}},
           {"action": "report_field", "params": {"field": "software", "value": "VNPT ICS"}}
         ], null, 2),
-        "Chuyển sang VNPT ICS (Gỡ 3.6, cài ICS, tự động lấy MAC ICS lên Sheet)",
+        "Chuyển sang VNPT ICS (Tải trực tiếp, cài ICS, tự động lấy MAC ICS lên Sheet)",
         "admin",
         nowIso
       ],
       [
         "deploy_radio_166",
         JSON.stringify([
-          {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
-          {"action": "install_apk", "params": {"file": "radio.apk"}},
+          {"action": "shell_cmd", "params": {"cmd": "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation ; /vendor/xbin/curl -L -k -o /data/local/tmp/radio.apk \"https://drive.usercontent.google.com/download?id=1fa3-qqFUJ6d9sCuLjidHAI6eom1mlxJ5&export=download&confirm=t\" && ls -l /data/local/tmp/radio.apk && pm install -r -d -g /data/local/tmp/radio.apk && rm -f /data/local/tmp/radio.apk"}},
+          {"action": "start_app", "params": {"package": "vn.phitn.app.radiostation", "activity": "vn.phitn.app.radiostation.ui.SplashActivity"}},
           {"action": "report_field", "params": {"field": "software", "value": "Radio 1.66"}}
         ], null, 2),
-        "Chuyển sang Radio 1.66 (Gỡ 3.6, cài Radio 1.66)",
+        "Chuyển sang Radio 1.66 (Tải trực tiếp & cài đè qua Root)",
         "admin",
         nowIso
       ],
       [
         "deploy_radio_20",
         JSON.stringify([
-          {"action": "uninstall_pkg", "params": {"package": "com.radiostation"}},
-          {"action": "install_apk", "params": {"file": "Radio2.0.apk"}},
-          {"action": "fetch_config", "params": {"sheet": "Config_Radio20", "key": "mac"}},
+          {"action": "shell_cmd", "params": {"cmd": "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation ; /vendor/xbin/curl -L -k -o /data/local/tmp/Radio2.0.apk \"https://drive.usercontent.google.com/download?id=1bLxqszxg5DficlG02cWZFjmGLxbMhiFT&export=download&confirm=t\" && ls -l /data/local/tmp/Radio2.0.apk && pm install -r -g /data/local/tmp/Radio2.0.apk && rm -f /data/local/tmp/Radio2.0.apk"}},
+          {"action": "start_app", "params": {"package": "vn.phitn.app.radiostation", "activity": "vn.phitn.app.radiostation.ui.SplashActivity"}},
           {"action": "report_field", "params": {"field": "software", "value": "Radio 2.0"}}
         ], null, 2),
-        "Nâng cấp Radio 2.0 (Đọc thông tin 14 input từ Google Sheet)",
+        "Nâng cấp Radio 2.0 (Tải trực tiếp & cài đè sạch qua Root, cấu hình Radio 2.0)",
         "admin",
         nowIso
       ]
@@ -2235,8 +2343,10 @@ function syncProjectSheets() {
   ];
 
   // 1. CẬP NHẬT TỪNG SHEET DỰ ÁN
+  var activeProjectSafeNames = {};
   for (var projName in byProject) {
     var safeName = projName.replace(/[\[\]\*\?\/\\:]/g, "-").substring(0, 80).trim();
+    activeProjectSafeNames[safeName.toLowerCase()] = true;
     var pSheet = ss.getSheetByName(safeName);
     if (!pSheet) {
       pSheet = ss.insertSheet(safeName);
@@ -2272,6 +2382,117 @@ function syncProjectSheets() {
       pSheet.getRange(2, 1, tableData.length, projHeaders.length).setValues(tableData);
       pSheet.getRange(1, 1, tableData.length + 1, projHeaders.length)
         .setBorder(true, true, true, true, true, true, "#CBD5E1", SpreadsheetApp.BorderStyle.SOLID);
+    }
+  }
+
+  // 1b. TỰ ĐỘNG DỌN DẸP / XÓA CÁC TAB DỰ ÁN CŨ KHÔNG CÒN THIẾT BỊ NÀO & LÀM SẠCH CÁC TAB NHÁP (New, Box Lỗi...)
+  var protectedSheets = {
+    "devices": true,
+    "tasks": true,
+    "templates": true,
+    "heartbeat": true,
+    "final - tất cả dự án": true,
+    "config_radio20": true,
+    "sheet1": true,
+    "trang tính 1": true,
+    "cấu hình": true
+  };
+
+  // Tạo bảng tra cứu nhanh AnyDesk -> Dự án chính thức hiện tại
+  var adToActiveProj = {};
+  for (var dIdx = 0; dIdx < dedupedRows.length; dIdx++) {
+    var dRow = dedupedRows[dIdx];
+    var normAd = normalizeAnydeskId(dRow.anydesk_id);
+    var dProj = String(dRow.project || "").trim();
+    if (normAd) {
+      adToActiveProj[normAd] = dProj;
+    }
+  }
+
+  var existingSheets = ss.getSheets();
+  for (var esIdx = 0; esIdx < existingSheets.length; esIdx++) {
+    var curS = existingSheets[esIdx];
+    var curName = String(curS.getName() || "").trim();
+    var curLower = curName.toLowerCase();
+
+    // Giữ nguyên các sheet hệ thống và sheet dự án đang có thiết bị hoạt động
+    if (!curName || protectedSheets[curLower] || activeProjectSafeNames[curLower]) {
+      continue;
+    }
+
+    var isStagingOrDraft = (
+      curLower === "new" || curLower === "mới" || curLower === "box mới" ||
+      curLower === "box lỗi" || curLower === "loi" || curLower === "lỗi" ||
+      curLower.indexOf("nháp") !== -1 || curLower.indexOf("draft") !== -1
+    );
+
+    if (isStagingOrDraft) {
+      // Sheet nháp / staging (New, box lỗi):
+      // Tự động loại bỏ các dòng AnyDesk đã được phân chia vào các Dự Án chính thức
+      var curLastRow = curS.getLastRow();
+      var curLastCol = curS.getLastColumn();
+      if (curLastRow > 0 && curLastCol > 0) {
+        var sheetData = curS.getRange(1, 1, curLastRow, Math.min(curLastCol, 15)).getValues();
+        var keptRows = [];
+        var removedCount = 0;
+
+        for (var r = 0; r < sheetData.length; r++) {
+          var row = sheetData[r];
+          var rowText = row.join(" ").toLowerCase();
+
+          // Giữ lại dòng tiêu đề nếu có
+          if (r === 0 && (rowText.indexOf("stt") !== -1 || rowText.indexOf("anydesk") !== -1 || rowText.indexOf("mac") !== -1)) {
+            keptRows.push(row);
+            continue;
+          }
+
+          var rowAd = "";
+          for (var c = 0; c < Math.min(row.length, 5); c++) {
+            var candAd = normalizeAnydeskId(row[c]);
+            if (/^\d{8,11}$/.test(candAd)) {
+              rowAd = candAd;
+              break;
+            }
+          }
+
+          if (rowAd) {
+            var assignedP = adToActiveProj[rowAd];
+            // Nếu Box này ĐÃ ĐƯỢC CHUYỂN vào một Dự Án thực tế (khác "Kho thiết bị" và khác tên sheet này) -> Bỏ dòng!
+            if (assignedP && assignedP !== "Kho thiết bị" && assignedP.toLowerCase() !== curLower) {
+              removedCount++;
+              continue;
+            }
+          }
+          keptRows.push(row);
+        }
+
+        if (removedCount > 0) {
+          curS.clear();
+          // Kiểm tra xem còn dòng dữ liệu thực tế nào không (ngoài tiêu đề)
+          var hasRealData = false;
+          for (var kr = 0; kr < keptRows.length; kr++) {
+            var krStr = keptRows[kr].join("").trim();
+            if (krStr && !/^(stt|anydesk|mac|mã)/i.test(keptRows[kr].join(" "))) {
+              hasRealData = true;
+              break;
+            }
+          }
+
+          if (hasRealData && keptRows.length > 0) {
+            curS.getRange(1, 1, keptRows.length, keptRows[0].length).setValues(keptRows);
+          }
+        }
+      }
+    } else {
+      // Đối với tab Dự Án cũ (như 'tịnh biên 83 box' sau khi chuyển hết sang 'tịnh biên 87 box'):
+      // Vì số lượng Box hiện tại thuộc dự án này đã = 0, tự động XÓA TAB để làm sạch bảng tính!
+      try {
+        if (ss.getSheets().length > 1) {
+          ss.deleteSheet(curS);
+        }
+      } catch (delErr) {
+        Logger.log("Không thể tự động xóa tab dự án cũ '" + curName + "': " + delErr.message);
+      }
     }
   }
 

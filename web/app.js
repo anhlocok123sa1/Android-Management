@@ -727,6 +727,32 @@ async function apiPostPocketBase(payload) {
     return { status: "ok", bound: true };
   }
 
+  if (action === "update_iot_id") {
+    const adClean = (payload.anydesk_id || "").replace(/\s+/g, "").trim();
+    const cleanM = (payload.mac || "").replace(/[^a-fA-F0-9]/g, "").toUpperCase();
+    const newIot = (payload.iot_id !== undefined ? String(payload.iot_id) : "").trim();
+    let query = "";
+    if (cleanM && !cleanM.startsWith("CHUA_MAC_")) {
+      query = `mac='${cleanM}'`;
+    } else if (adClean) {
+      query = `anydesk_id='${adClean}'`;
+    }
+    if (query) {
+      try {
+        const searchResp = await fetch(`${state.pocketbaseUrl}/api/collections/devices/records?filter=(${encodeURIComponent(query)})`, { headers });
+        const searchData = await searchResp.json();
+        if (searchData.items && searchData.items.length > 0) {
+          await fetch(`${state.pocketbaseUrl}/api/collections/devices/records/${searchData.items[0].id}`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ iot_id: newIot })
+          });
+        }
+      } catch (e) {}
+    }
+    return { status: "ok", iot_id: newIot };
+  }
+
   return { status: "ok" };
 }
 
@@ -1213,7 +1239,13 @@ function renderDeviceTable() {
           </span>
         </td>
         <td class="mono">
-          ${iotId !== "-" ? `<span class="copy-chip" style="color:var(--accent-cyan);" onclick="copyText('${safeIot}', 'Đã chép Mã IoT: ${safeIot}')" title="Bấm để sao chép Mã IoT">${safeIot}</span>` : "-"}
+          <div style="display:inline-flex; align-items:center; gap:6px; cursor:pointer;" onclick="openEditIotModal('${safeMac}', '${safeAd}', '${escapeHtml(d.iot_id || '')}')" title="Bấm để chỉnh sửa Mã IoT">
+            ${iotId !== "-" 
+              ? `<span class="copy-chip" style="color:var(--accent-cyan); font-weight:700;">${safeIot}</span>` 
+              : `<span style="color:var(--text-muted); font-size:12px; border-bottom:1px dashed var(--text-muted);">➕ Thêm IoT</span>`
+            }
+            <span style="font-size:12px; opacity:0.65;" title="Chỉnh sửa Mã IoT">✏️</span>
+          </div>
         </td>
         <td><span class="badge badge-proj">${escapeHtml(proj)}</span></td>
         <td><span class="badge badge-soft">${escapeHtml(soft)}</span></td>
@@ -1229,6 +1261,9 @@ function renderDeviceTable() {
           <div style="display:flex; gap:6px;">
             <button class="btn btn-primary btn-sm" onclick="connectAnyDesk('${safeAd}')" title="Mở AnyDesk & tự nạp mật khẩu ${state.adPass}">
               💻 AnyDesk
+            </button>
+            <button class="btn btn-cyan btn-sm" onclick="openEditIotModal('${safeMac}', '${safeAd}', '${escapeHtml(d.iot_id || '')}')" title="Chỉnh sửa Mã IoT">
+              🏷️ Sửa IoT
             </button>
             <button class="btn btn-outline btn-sm" onclick="quickAssignSingle('${safeMac}')" title="Đổi dự án">
               📁 Dự án
@@ -1382,6 +1417,79 @@ async function confirmAssignProject() {
     }
   } catch (err) {
     showToast(`❌ Lỗi kết nối khi gán dự án: ${err.message}`, true);
+  }
+}
+
+// ============================================================================
+// EDIT IOT ID MODAL
+// ============================================================================
+function openEditIotModal(mac, anydeskId, currentIot) {
+  const cleanAd = String(anydeskId || "").trim();
+  const cleanMac = String(mac || "").trim();
+  const cleanIot = (currentIot && currentIot !== "-") ? String(currentIot).trim() : "";
+
+  document.getElementById("hidEditIotMac").value = cleanMac;
+  document.getElementById("hidEditIotAnydesk").value = cleanAd;
+
+  const devTitle = cleanAd 
+    ? `AnyDesk: ${cleanAd} ${cleanMac && !isPlaceholderMac(cleanMac) ? `(${cleanMac})` : ""}`
+    : `MAC: ${cleanMac}`;
+  document.getElementById("lblEditIotDevice").textContent = devTitle;
+
+  const inputEl = document.getElementById("txtEditIotValue");
+  inputEl.value = cleanIot;
+  document.getElementById("modalEditIot").classList.add("open");
+
+  setTimeout(() => {
+    inputEl.focus();
+    inputEl.select();
+  }, 100);
+}
+
+async function confirmSaveEditIot() {
+  const mac = (document.getElementById("hidEditIotMac").value || "").trim();
+  const anydeskId = (document.getElementById("hidEditIotAnydesk").value || "").trim();
+  const newIot = (document.getElementById("txtEditIotValue").value || "").trim();
+
+  if (!anydeskId && !mac) {
+    showToast("Không tìm thấy thông tin thiết bị để lưu!", true);
+    return;
+  }
+
+  const btn = document.getElementById("btnSaveEditIot");
+  btn.disabled = true;
+  btn.textContent = "⏳ Đang lưu...";
+
+  try {
+    const res = await apiPost({
+      action: "update_iot_id",
+      mac: mac,
+      anydesk_id: anydeskId,
+      iot_id: newIot
+    });
+
+    if (res && res.status === "ok") {
+      state.devices.forEach(d => {
+        const dAd = String(d.anydesk_id || "").replace(/[\s\-]/g, "").trim();
+        const dMac = String(d.mac || "").replace(/[:\-]/g, "").toUpperCase();
+        if ((anydeskId && dAd === anydeskId) || (mac && dMac === mac)) {
+          d.iot_id = newIot;
+        }
+      });
+      if (anydeskId) state.recentlyAddedKeys.add(anydeskId.replace(/\D/g, ""));
+      if (mac && !isPlaceholderMac(mac)) state.recentlyAddedKeys.add(mac.toUpperCase());
+
+      closeModal("modalEditIot");
+      showToast(`✔ Đã cập nhật Mã IoT: ${newIot || "(Đã xóa)"} cho Box ${anydeskId || mac}!`);
+      renderDeviceTable();
+    } else {
+      showToast(`❌ Lỗi: ${(res && res.message) || "Không thể cập nhật Mã IoT"}`, true);
+    }
+  } catch (err) {
+    showToast(`❌ Lỗi kết nối: ${err.message}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "✔ Lưu Mã IoT";
   }
 }
 
@@ -1893,6 +2001,19 @@ async function printDeviceLabel(anydeskId, iotId) {
     const userVal = prompt(`Box AnyDesk: ${adClean}\nNhập Mã IoT để in lên tem (VD: 11250):`, "");
     if (userVal === null) return false;
     finalIot = userVal.trim();
+    if (finalIot) {
+      // Tự động lưu Mã IoT vừa nhập lên Google Sheet / PocketBase
+      apiPost({
+        action: "update_iot_id",
+        anydesk_id: adClean,
+        iot_id: finalIot
+      }).then(() => {
+        state.devices.forEach(d => {
+          if (String(d.anydesk_id || "").replace(/[\s\-]/g, "") === adClean) d.iot_id = finalIot;
+        });
+        renderDeviceTable();
+      }).catch(() => {});
+    }
   }
 
   // Xác định địa chỉ máy in (Print Server)
