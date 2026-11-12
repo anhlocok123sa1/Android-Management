@@ -1200,7 +1200,7 @@ function renderDeviceTable() {
   filtered.forEach((d, idx) => {
     const mac = d.mac || "";
     const adId = d.anydesk_id || "";
-    const iotId = d.iot_id || "-";
+    const iotId = d.iot_id || d.iot || "-";
     const proj = d.project || "Kho thiết bị";
     const soft = d.software || "Radio 3.6";
     const ics = d.mac_ics || "-";
@@ -1994,7 +1994,7 @@ async function printDeviceLabel(anydeskId, iotId) {
   }
 
   let finalIot = String(iotId || "").trim();
-  if (!finalIot || finalIot === "-") {
+  if (!finalIot || finalIot === "-" || finalIot === "undefined" || finalIot === "null") {
     const userVal = prompt(`Box AnyDesk: ${adClean}\nNhập Mã IoT để in lên tem (VD: 11250):`, "");
     if (userVal === null) return false;
     finalIot = userVal.trim();
@@ -2006,7 +2006,10 @@ async function printDeviceLabel(anydeskId, iotId) {
         iot_id: finalIot
       }).then(() => {
         state.devices.forEach(d => {
-          if (String(d.anydesk_id || "").replace(/[\s\-]/g, "") === adClean) d.iot_id = finalIot;
+          if (String(d.anydesk_id || "").replace(/[\s\-]/g, "") === adClean) {
+            d.iot_id = finalIot;
+            d.iot = finalIot;
+          }
         });
         renderDeviceTable();
       }).catch(() => {});
@@ -2072,7 +2075,7 @@ async function printSelectedDevices() {
   let count = 0;
   for (const dev of selectedList) {
     const ad = dev.anydesk_id || "";
-    const iot = dev.iot_id || "";
+    const iot = dev.iot_id || dev.iot || "";
     if (ad && ad !== "Chưa có") {
       const ok = await printDeviceLabel(ad, iot);
       if (ok) count++;

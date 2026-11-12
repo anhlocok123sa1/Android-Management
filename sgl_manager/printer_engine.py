@@ -37,8 +37,8 @@ def get_best_font(size: int, bold: bool = False):
 def render_label_15x40(anydesk_id: str, iot_id: str) -> Image.Image:
     """
     Vẽ con tem 15x40mm chuẩn theo mẫu người dùng cung cấp:
-    - Nửa bên trái: Mã vạch Code 128 (AnyDesk ID) + Chữ AnyDesk ID ở dưới
-    - Nửa bên phải: Mã IoT ID cỡ chữ to, đậm, căn giữa theo chiều dọc
+    - Nửa bên trái: Mã vạch Code 128 (AnyDesk ID) + Chữ AnyDesk ID ở dưới (to đậm, rõ nét)
+    - Nửa bên phải: Mã IoT ID cỡ chữ to, đậm, đặt sát cạnh mã vạch (tránh bị mép cắt nhãn xén mất IoT)
     """
     canvas_w, canvas_h = LABEL_LENGTH_PX, LABEL_WIDTH_PX # 320 x 96
     canvas = Image.new("L", (canvas_w, canvas_h), color=255)
@@ -48,7 +48,7 @@ def render_label_15x40(anydesk_id: str, iot_id: str) -> Image.Image:
     iot_clean = str(iot_id or "").strip()
     if not anydesk_clean:
         anydesk_clean = "000000000"
-    if not iot_clean:
+    if not iot_clean or iot_clean == "-":
         iot_clean = "---"
 
     # 1. TẠO MÃ VẠCH CODE 128 (ANYDESK ID)
@@ -58,16 +58,16 @@ def render_label_15x40(anydesk_id: str, iot_id: str) -> Image.Image:
     writer_options = {
         "write_text": False,
         "module_width": 0.25, # Đúng chuẩn 2 dots / module tại 203 DPI -> cực kỳ sắc nét
-        "module_height": 6.2, # Chiều cao vạch ~50 dots
-        "quiet_zone": 0.8,
+        "module_height": 5.8, # Chiều cao vạch ~46-48 dots
+        "quiet_zone": 0.3,
     }
     bc = code128(anydesk_clean, writer=writer)
     bc_img = bc.render(writer_options).convert("L")
 
-    # Cắt bỏ khoảng trắng đệm dọc thừa từ thư viện barcode
+    # Cắt bỏ khoảng trắng đệm thừa từ thư viện barcode
     bbox = Image.eval(bc_img, lambda x: 255 - x).getbbox()
     if bbox:
-        bc_cropped = bc_img.crop((0, bbox[1], bc_img.width, bbox[3]))
+        bc_cropped = bc_img.crop(bbox)
     else:
         bc_cropped = bc_img
 
@@ -76,25 +76,34 @@ def render_label_15x40(anydesk_id: str, iot_id: str) -> Image.Image:
     bc_y = 6
     canvas.paste(bc_cropped, (bc_x, bc_y))
 
-    # 2. VẼ CHỮ ANYDESK ID NGAY DƯỚI MÃ VẠCH (CĂN GIỮA MÃ VẠCH)
-    font_ad = get_best_font(size=16, bold=False)
+    # 2. VẼ CHỮ ANYDESK ID NGAY DƯỚI MÃ VẠCH (CĂN GIỮA MÃ VẠCH, SIZE TO HƠN, IN ĐẬM)
+    font_ad = get_best_font(size=20, bold=True)
     ad_bbox = draw.textbbox((0, 0), anydesk_clean, font=font_ad)
     ad_w = ad_bbox[2] - ad_bbox[0]
     ad_x = bc_x + (bc_cropped.width - ad_w) // 2
-    ad_y = bc_y + bc_cropped.height + 3
+    ad_y = bc_y + bc_cropped.height + 4
     draw.text((ad_x, ad_y), anydesk_clean, fill=0, font=font_ad)
 
-    # 3. VẼ MÃ IOT BÊN PHẢI (CHỮ TO, IN ĐẬM, CĂN GIỮA KHỐI PHẢI)
-    font_size = 28 if len(iot_clean) <= 6 else (22 if len(iot_clean) <= 9 else 16)
-    font_iot = get_best_font(size=font_size, bold=True)
+    # 3. VẼ MÃ IOT BÊN PHẢI: ĐẶT SÁT CẠNH MÃ VẠCH, CHỮ TO ĐẬM, TRÁNH RÌA CẮT NHÃN
+    gap = 8
+    iot_x = bc_x + bc_cropped.width + gap
+    max_safe_x = 286 # Giữ khoảng đệm an toàn ít nhất 34px (~4.2mm) trước mép cắt cuộn tem
+
+    # Tự động chọn font size lớn nhất vừa trong vùng an toàn (size 34 -> 16)
+    chosen_sz = 34
+    for sz in range(34, 16, -2):
+        f_test = get_best_font(size=sz, bold=True)
+        ibox = draw.textbbox((0, 0), iot_clean, font=f_test)
+        if (iot_x + ibox[2] - ibox[0]) <= max_safe_x:
+            chosen_sz = sz
+            break
+        chosen_sz = sz
+
+    font_iot = get_best_font(size=chosen_sz, bold=True)
     iot_bbox = draw.textbbox((0, 0), iot_clean, font=font_iot)
     iot_w = iot_bbox[2] - iot_bbox[0]
     iot_h = iot_bbox[3] - iot_bbox[1]
-
-    right_zone_start = bc_x + bc_cropped.width + 4
-    right_zone_width = canvas_w - right_zone_start
-    iot_x = right_zone_start + max(0, (right_zone_width - iot_w) // 2)
-    iot_y = (canvas_h - iot_h) // 2 - 4
+    iot_y = (canvas_h - iot_h) // 2 - 2
     draw.text((iot_x, iot_y), iot_clean, fill=0, font=font_iot)
 
     # Xoay -90 độ để khớp hướng đẩy giấy của đầu in nhiệt (đầu in 96px x chiều dài 320px)

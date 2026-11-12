@@ -441,7 +441,7 @@ class Stage2Frame(tk.Frame):
                 continue
 
             # Nếu máy chưa có mã IoT -> hiện popup hỏi nhanh
-            if not iot_id or iot_id == "-":
+            if not iot_id or iot_id == "-" or iot_id.lower() == "none":
                 val = simpledialog.askstring(
                     "Nhập Mã IoT",
                     f"Box AnyDesk: {ad_id}\nĐịa chỉ MAC: {mac}\n\nNhập Mã IoT để in lên tem (VD: 11250):",
