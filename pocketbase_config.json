@@ -1,0 +1,9 @@
+{
+  "pocketbase_port": 8090,
+  "admin_email": "admin@sgl.local",
+  "admin_password": "SglAdminPassword2026!",
+  "api_secret": "sgl_secret_token_2026",
+  "fixed_domain": "",
+  "active_tunnel_url": "",
+  "legacy_webhook_enabled": true
+}

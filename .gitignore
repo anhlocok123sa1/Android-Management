@@ -35,3 +35,14 @@ local.properties
 .sgl_local_secret
 .env
 anydesk_config/
+
+# PocketBase & Local Databases
+bin/pocketbase/pb_data/
+*.db
+*.db-wal
+*.db-shm
+
+# Worktrees & Agent scratch
+.superpowers/
+.worktrees/
+

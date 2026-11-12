@@ -151,10 +151,21 @@ public class TaskExecutor {
             return "ERROR: Invalid download URL scheme";
         }
 
-        // Ensure directory exists
+        // Tự động chuyển đổi link Google Drive thông thường sang link tải trực tiếp vượt cảnh báo file lớn
+        if (url.contains("drive.google.com/uc") || url.contains("drive.google.com/file/d/")) {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?:id=|/d/)([a-zA-Z0-9_-]{25,})").matcher(url);
+            if (m.find()) {
+                url = "https://drive.usercontent.google.com/download?id=" + m.group(1) + "&export=download&confirm=t";
+            }
+        }
+
+        // Đảm bảo thư mục lưu tồn tại (với quyền root đề phòng Android Scoped Storage)
         File dir = new File(Constants.LOCAL_TASK_DIR);
         if (!dir.exists()) {
             dir.mkdirs();
+        }
+        if (!dir.exists()) {
+            runRootCommand("mkdir -p " + Constants.LOCAL_TASK_DIR + " && chmod 777 " + Constants.LOCAL_TASK_DIR);
         }
 
         File destFile = new File(dir, saveAs);
@@ -166,9 +177,14 @@ public class TaskExecutor {
                 .build();
 
         int lastError = 0;
+        String lastException = "";
         for (int attempt = 1; attempt <= Constants.MAX_RETRY; attempt++) {
             try {
-                Request request = new Request.Builder().url(url).get().build();
+                Request request = new Request.Builder()
+                        .url(url)
+                        .header("User-Agent", "Mozilla/5.0 (Android; Linux)")
+                        .get()
+                        .build();
                 try (Response response = dlClient.newCall(request).execute()) {
                     if (!response.isSuccessful()) {
                         lastError = response.code();
@@ -196,10 +212,24 @@ public class TaskExecutor {
                     Log.w(Constants.TAG, "download attempt " + attempt + " zero-size file");
                 }
             } catch (IOException e) {
+                lastException = e.getClass().getSimpleName() + ": " + e.getMessage();
                 Log.w(Constants.TAG, "download attempt " + attempt + " IOException: " + e.getMessage());
             }
         }
-        return "ERROR: download failed after " + Constants.MAX_RETRY + " attempts (last HTTP " + lastError + ")";
+
+        // Cơ chế dự phòng cấp Root nếu Java app bị chặn quyền lưu trữ hoặc mạng
+        Log.i(Constants.TAG, "Thực thi root download fallback cho " + saveAs);
+        String curlFallbackCmd = "mkdir -p " + Constants.LOCAL_TASK_DIR + " && "
+                + "(/vendor/xbin/curl -L -k -o \"" + destFile.getAbsolutePath() + "\" \"" + url + "\" || "
+                + "curl -L -k -o \"" + destFile.getAbsolutePath() + "\" \"" + url + "\" || "
+                + "/vendor/xbin/wget --no-check-certificate -O \"" + destFile.getAbsolutePath() + "\" \"" + url + "\")";
+        runRootCommand(curlFallbackCmd);
+
+        if (destFile.exists() && destFile.length() > 0) {
+            return "Downloaded " + saveAs + " (" + destFile.length() + " bytes via root fallback)";
+        }
+
+        return "ERROR: download failed after " + Constants.MAX_RETRY + " attempts (HTTP " + lastError + (lastException.isEmpty() ? "" : ", " + lastException) + ")";
     }
 
     // -------------------------------------------------------------------------
@@ -215,7 +245,10 @@ public class TaskExecutor {
             srcFile = new File("/sdcard/SGL_Backup_Apks", file);
         }
         if (!srcFile.exists()) {
-            return "ERROR: APK file not found in SGL_Tasks or SGL_Backup_Apks: " + file;
+            srcFile = new File("/data/local/tmp", file);
+        }
+        if (!srcFile.exists()) {
+            return "ERROR: APK file not found in SGL_Tasks, SGL_Backup_Apks, or /data/local/tmp: " + file;
         }
         String cmd = "cp \"" + srcFile.getAbsolutePath() + "\" /data/local/tmp/sgl_task_install.apk && "
                 + "chmod 644 /data/local/tmp/sgl_task_install.apk && "
@@ -234,9 +267,9 @@ public class TaskExecutor {
         }
         String cmd;
         if ("com.radiostation".equals(pkg) || "vn.phitn.app.radiostation".equals(pkg)) {
-            cmd = "am force-stop vn.phitn.app.radiostation ; pm uninstall vn.phitn.app.radiostation ; am force-stop com.radiostation ; pm uninstall com.radiostation";
+            cmd = "am force-stop vn.phitn.app.radiostation ; am force-stop com.radiostation ; pm uninstall vn.phitn.app.radiostation || true ; pm uninstall com.radiostation || true";
         } else {
-            cmd = "am force-stop " + pkg + " ; pm uninstall " + pkg;
+            cmd = "am force-stop " + pkg + " ; pm uninstall " + pkg + " || true";
         }
         return runRootCommand(cmd);
     }

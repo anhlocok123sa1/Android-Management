@@ -47,6 +47,20 @@ FG_DIM = "#4E7A5B"
 FG_TEXT = "#C8F7D2"
 BORDER_NEON = "#008F24"
 
+
+def get_active_backend_client():
+    """Tự động trả về PocketBaseClient nếu có cấu hình PocketBase, ngược lại dùng WebhookClient."""
+    pb_cfg = os.path.join(BASE_DIR, "pocketbase_config.json")
+    if os.path.isfile(pb_cfg):
+        try:
+            from .pocketbase_client import PocketBaseClient
+            return PocketBaseClient()
+        except Exception:
+            pass
+    from .webhook import WebhookClient
+    return WebhookClient()
+
+
 # Tên máy in nhãn nhiệt Windows
 DEFAULT_PRINTER_NAME = "AiYin_D11"
 

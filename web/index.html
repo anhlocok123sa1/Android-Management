@@ -101,6 +101,9 @@
     </nav>
 
     <div class="topbar-actions">
+      <div id="badgeBackend" class="badge" style="background:#00e676; color:#000; font-weight:bold; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer;" onclick="switchTab('tab-settings')" title="Bấm để cấu hình Backend CSDL">
+        ⚡ PocketBase
+      </div>
       <div class="sync-indicator" title="Tự động đồng bộ mỗi 30 giây">
         <span class="pulse-dot" id="syncDot"></span>
         <span id="lblLastSync">Đang kết nối...</span>
@@ -421,15 +424,36 @@
     <section id="tab-settings" class="tab-panel">
       <div class="panel-card" style="max-width:780px; margin:0 auto;">
         <div class="panel-header">
-          <div class="panel-title">⚙️ CẤU HÌNH KẾT NỐI CLOUD WEBHOOK &amp; ANYDESK</div>
+          <div class="panel-title">⚙️ CẤU HÌNH KẾT NỐI CLOUD WEBHOOK, POCKETBASE &amp; ANYDESK</div>
         </div>
 
-        <div class="form-row">
-          <label>Google Apps Script Webhook URL:</label>
+        <div class="form-row" style="background:rgba(0,255,102,0.05); padding:10px; border-radius:6px; border:1px solid rgba(0,255,102,0.2);">
+          <label style="color:var(--accent-green); font-weight:bold;">⚡ Chọn Nền Tảng Backend CSDL:</label>
+          <select id="selBackendType" class="input-control" onchange="onBackendTypeChange()" style="font-weight:bold;">
+            <option value="pocketbase">⚡ PocketBase (Siêu tốc &amp; Thời gian thực SSE - Khuyên dùng)</option>
+            <option value="sheets">📊 Google Sheets &amp; Apps Script Webhook (Bản cũ)</option>
+          </select>
+        </div>
+
+        <div class="form-row" id="rowPocketBaseUrl">
+          <label>🌐 PocketBase Server URL (Local / Cloudflare Tunnel / Domain):</label>
+          <input type="text" id="txtPocketBaseUrl" class="input-control mono" placeholder="VD: http://127.0.0.1:8090 hoặc https://xxxx.trycloudflare.com" />
+          <small style="color:var(--text-muted); font-size:11px; margin-top:4px; display:block;">
+            Nhập địa chỉ máy chủ PocketBase nội bộ hoặc đường dẫn Cloudflare Tunnel công khai.
+          </small>
+        </div>
+
+        <div class="form-row" id="rowPocketBaseSecret">
+          <label>🔑 PocketBase API Secret Key (X-SGL-Secret):</label>
+          <input type="password" id="txtPocketBaseSecret" class="input-control mono" placeholder="sgl_secret_token_2026" />
+        </div>
+
+        <div class="form-row" id="rowGoogleWebhook">
+          <label>Google Apps Script Webhook URL (Khi chọn Sheets):</label>
           <input type="text" id="txtWebhookUrl" class="input-control mono" />
         </div>
 
-        <div class="form-row">
+        <div class="form-row" id="rowGoogleSheet">
           <label>Link Google Sheet Quản Lý Dự Án:</label>
           <input type="text" id="txtSheetUrl" class="input-control mono" />
         </div>
@@ -594,6 +618,41 @@
         <button class="btn btn-outline" onclick="closeModal('modalBulkImportOldProject')">Hủy</button>
         <button class="btn btn-primary" id="btnConfirmBulkOld" onclick="confirmBulkImportOldProject()">
           📥 Tạo Sheet Dự Án &amp; Nạp Mã AnyDesk
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 4: SỬA MÃ IOT THIẾT BỊ                                          -->
+  <!-- ===================================================================== -->
+  <div class="modal-backdrop" id="modalEditIot">
+    <div class="modal-box" style="max-width:460px;">
+      <div class="modal-title">🏷️ Chỉnh Sửa Mã IoT Thiết Bị</div>
+      <div class="form-row">
+        <label>Thiết bị đang chọn:</label>
+        <div id="lblEditIotDevice" class="mono" style="color:var(--accent-green); font-weight:700; font-size:15px; padding:8px 12px; background:var(--bg-input); border-radius:6px;">--</div>
+      </div>
+      <input type="hidden" id="hidEditIotMac" />
+      <input type="hidden" id="hidEditIotAnydesk" />
+      <div class="form-row">
+        <label>Mã IoT (Quét bằng súng barcode hoặc gõ tay):</label>
+        <input
+          type="text"
+          id="txtEditIotValue"
+          class="input-control mono"
+          placeholder="Nhập Mã IoT (VD: 11250, IOT-9988...)"
+          autocomplete="off"
+          onkeydown="if(event.key==='Enter') confirmSaveEditIot()"
+        />
+      </div>
+      <div style="font-size:12px; color:var(--text-muted); margin-top:-6px; margin-bottom:12px;">
+        💡 Nhấn <b>Enter</b> hoặc bấm nút <b>Lưu Mã IoT</b> để cập nhật ngay lên Google Sheet &amp; In tem.
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button class="btn btn-outline" onclick="closeModal('modalEditIot')">Hủy</button>
+        <button class="btn btn-primary" id="btnSaveEditIot" onclick="confirmSaveEditIot()">
+          ✔ Lưu Mã IoT
         </button>
       </div>
     </div>
