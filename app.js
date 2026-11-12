@@ -36,6 +36,47 @@ try {
   }
 } catch (e) {}
 
+// ============================================================================
+// THEME SWITCHER (DARK / LIGHT MODE)
+// ============================================================================
+function getCurrentTheme() {
+  return document.documentElement.getAttribute("data-theme") || localStorage.getItem("sgl_theme") || "dark";
+}
+
+function updateThemeButtons(theme) {
+  const isLight = theme === "light";
+  const btnTop = document.getElementById("btnToggleTheme");
+  const btnLogin = document.getElementById("btnLoginThemeToggle");
+  const label = isLight ? "🌙 Chế độ tối" : "☀️ Chế độ sáng";
+  const title = isLight ? "Chuyển sang giao diện Tối" : "Chuyển sang giao diện Sáng";
+
+  if (btnTop) {
+    btnTop.innerHTML = label;
+    btnTop.title = title;
+  }
+  if (btnLogin) {
+    btnLogin.innerHTML = label;
+    btnLogin.title = title;
+  }
+}
+
+function toggleTheme() {
+  const current = getCurrentTheme();
+  const next = current === "light" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", next);
+  try {
+    localStorage.setItem("sgl_theme", next);
+  } catch (e) {}
+  updateThemeButtons(next);
+  if (typeof showToast === "function") {
+    showToast(next === "light" ? "☀️ Đã chuyển sang Giao diện Sáng" : "🌙 Đã chuyển sang Giao diện Tối");
+  }
+}
+
+try {
+  updateThemeButtons(getCurrentTheme());
+} catch (e) {}
+
 const DEFAULT_TEMPLATES = [
   {
     template_name: "deploy_radio_36",
@@ -449,6 +490,7 @@ function handleLogout(customMsg) {
 // INITIALIZATION
 // ============================================================================
 window.addEventListener("DOMContentLoaded", () => {
+  updateThemeButtons(getCurrentTheme());
   if (isSessionAuthenticated()) {
     unlockApplication();
   } else {
