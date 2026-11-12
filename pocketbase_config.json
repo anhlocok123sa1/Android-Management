@@ -4,6 +4,6 @@
   "admin_password": "SglAdminPassword2026!",
   "api_secret": "sgl_secret_token_2026",
   "fixed_domain": "",
-  "active_tunnel_url": "",
+  "active_tunnel_url": "https://signature-novels-turning-candle.trycloudflare.com",
   "legacy_webhook_enabled": true
 }
