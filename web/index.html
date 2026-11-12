@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SGL Smart Broadcast Cloud — Quản Trị Thiết Bị Truyền Thanh</title>
   <link rel="stylesheet" href="styles.css" />
+  <script>
+    (function() {
+      try {
+        var savedTheme = localStorage.getItem("sgl_theme") || "dark";
+        document.documentElement.setAttribute("data-theme", savedTheme);
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
 
@@ -12,6 +20,15 @@
   <!-- LOGIN GATE OVERLAY (BẢO MẬT ĐĂNG NHẬP HỆ THỐNG)                     -->
   <!-- =================================================================== -->
   <div id="loginGate" class="login-gate">
+    <button
+      type="button"
+      id="btnLoginThemeToggle"
+      class="btn btn-outline btn-sm login-theme-btn"
+      onclick="toggleTheme()"
+      title="Chuyển chế độ Sáng / Tối"
+    >
+      ☀️ Chế độ sáng
+    </button>
     <div class="login-card" id="loginCard">
       <div class="login-header">
         <div class="login-logo">SGL</div>
@@ -110,6 +127,9 @@
       </div>
       <button class="btn btn-outline btn-sm" onclick="refreshAllData()">
         🔄 Làm mới
+      </button>
+      <button id="btnToggleTheme" class="btn btn-outline btn-sm" onclick="toggleTheme()" title="Chuyển chế độ Sáng / Tối">
+        ☀️ Chế độ sáng
       </button>
       <a id="btnOpenSheetTop" href="https://docs.google.com/spreadsheets/d/1-7ZrYTDnoL68BNB7D9QQWxhDGcGNXW3VVfdedAtejAg/edit" target="_blank" class="btn btn-cyan btn-sm" style="text-decoration:none;">
         📊 Mở Google Sheet
