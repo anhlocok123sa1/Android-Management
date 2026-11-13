@@ -833,7 +833,10 @@ function routeAction(action, params) {
     "get_devices": true,
     "get_templates": true,
     "get_tasks": true,
-    "verify_auth": true
+    "verify_auth": true,
+    "get_iot_statuses": true,
+    "save_cmsiot_config": true,
+    "get_cmsiot_config_status": true
   };
 
   if (adminActions[action]) {
@@ -877,6 +880,12 @@ function routeAction(action, params) {
       return handleGetTemplates(params);
     case "get_tasks":
       return handleGetTasks(params);
+    case "get_iot_statuses":
+      return handleGetIotStatuses(params);
+    case "save_cmsiot_config":
+      return handleSaveCmsIotConfig(params);
+    case "get_cmsiot_config_status":
+      return handleGetCmsIotConfigStatus();
 
     default:
       return errorResponse("Hành động không hợp lệ: " + action);
@@ -2600,4 +2609,312 @@ function syncProjectSheets() {
     fSheet.getRange(1, 1, finalData.length + 1, finalHeaders.length)
       .setBorder(true, true, true, true, true, true, "#94A3B8", SpreadsheetApp.BorderStyle.SOLID);
   }
+}
+
+// ==============================================================================
+// SAIGONIOT CMS INTEGRATION (SERVER-SIDE PROXY — CREDENTIALS NEVER EXPOSED)
+// ==============================================================================
+
+var CMSIOT_API_BASE = "https://cmsiot.saigoniot.vn:444/api";
+var CMSIOT_PROP_USER = "CMSIOT_USERNAME";
+var CMSIOT_PROP_PASS = "CMSIOT_PASSWORD";
+var CMSIOT_PROP_TOKEN = "CMSIOT_TOKEN";
+var CMSIOT_CACHE_KEY = "sgl_cmsiot_status_cache_v1";
+
+function maskCmsIotUsername(u) {
+  var s = String(u || "").trim();
+  if (s.length <= 2) return s ? s[0] + "*" : "";
+  if (s.length <= 5) return s.slice(0, 2) + "***";
+  return s.slice(0, 3) + "***" + s.slice(-2);
+}
+
+/**
+ * Helper chạy thủ công trong Apps Script Editor (nếu muốn cài đặt trực tiếp từ server).
+ */
+function setupCmsIotCredentials(username, password) {
+  var u = String(username || "").trim();
+  var p = String(password || "").trim();
+  if (!u || !p) throw new Error("Cần cung cấp username và password.");
+  var loginRes = cmsIotLogin(u, p);
+  if (!loginRes.ok) {
+    throw new Error("Đăng nhập SaigonIoT CMS thất bại: " + loginRes.message);
+  }
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty(CMSIOT_PROP_USER, u);
+  props.setProperty(CMSIOT_PROP_PASS, p);
+  props.setProperty(CMSIOT_PROP_TOKEN, loginRes.token);
+  try {
+    CacheService.getScriptCache().remove(CMSIOT_CACHE_KEY);
+  } catch (e) {}
+  Logger.log("Đã lưu thông tin đăng nhập SaigonIoT CMS thành công.");
+}
+
+function cmsIotLogin(username, password) {
+  try {
+    var resp = UrlFetchApp.fetch(CMSIOT_API_BASE + "/User/login", {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      payload: JSON.stringify({
+        UserName: String(username || "").trim(),
+        PassWord: String(password || ""),
+        RecaptchaToken: "",
+        TwoFactorCode: ""
+      })
+    });
+    var code = resp.getResponseCode();
+    var text = resp.getContentText();
+    var json = {};
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      return { ok: false, message: "Phản hồi không hợp lệ từ CMS IoT (HTTP " + code + ")" };
+    }
+    var token = (json.data && json.data.access_token) || json.access_token || "";
+    if (code >= 200 && code < 300 && token) {
+      return { ok: true, token: token };
+    }
+    var errMsg = (json.error && (json.error.msg || json.error.message)) || json.message || ("HTTP " + code);
+    return { ok: false, message: errMsg };
+  } catch (err) {
+    return { ok: false, message: err.message || String(err) };
+  }
+}
+
+function handleGetCmsIotConfigStatus() {
+  var props = PropertiesService.getScriptProperties();
+  var u = props.getProperty(CMSIOT_PROP_USER) || "";
+  var p = props.getProperty(CMSIOT_PROP_PASS) || "";
+  return {
+    status: "ok",
+    configured: !!(u && p),
+    username_hint: u ? maskCmsIotUsername(u) : ""
+  };
+}
+
+function handleSaveCmsIotConfig(params) {
+  var u = String(params.username || "").trim();
+  var p = String(params.password || "").trim();
+  if (!u || !p) {
+    return errorResponse("Vui lòng nhập đầy đủ Tên đăng nhập và Mật khẩu SaigonIoT CMS.");
+  }
+  var loginRes = cmsIotLogin(u, p);
+  if (!loginRes.ok) {
+    return errorResponse("Đăng nhập SaigonIoT CMS thất bại: " + loginRes.message);
+  }
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty(CMSIOT_PROP_USER, u);
+  props.setProperty(CMSIOT_PROP_PASS, p);
+  props.setProperty(CMSIOT_PROP_TOKEN, loginRes.token);
+  try {
+    CacheService.getScriptCache().remove(CMSIOT_CACHE_KEY);
+  } catch (e) {}
+  return {
+    status: "ok",
+    configured: true,
+    username_hint: maskCmsIotUsername(u),
+    message: "Đã xác thực & lưu cấu hình SaigonIoT CMS an toàn trên server."
+  };
+}
+
+function buildCompactIotItem(it) {
+  return {
+    id: String(it.deviceId || "").trim(),
+    name: it.deviceName || "",
+    status: it.deviceStatus,
+    signal: it.modemSignal !== undefined ? it.modemSignal : null,
+    temp: it.temperature !== undefined ? it.temperature : null,
+    humidity: it.humidity !== undefined ? it.humidity : null,
+    firmware: it.firmwareVersion || "",
+    last_ping: it.lastTimePing || "",
+    android_status: it.androidStatus !== undefined ? it.androidStatus : null
+  };
+}
+
+function buildCmsIotFindRequest(token, deviceId) {
+  return {
+    url: CMSIOT_API_BASE + "/Device/find-status",
+    method: "post",
+    contentType: "application/json",
+    muteHttpExceptions: true,
+    headers: {
+      Authorization: "Bearer " + token
+    },
+    payload: JSON.stringify({
+      filter: {
+        customerId: "",
+        deviceType: "",
+        areaCodeTinh: "",
+        areaCodeHuyen: "",
+        areaCodeXa: "",
+        deviceId: String(deviceId || "").trim(),
+        deviceName: "",
+        deviceStatusFilter: "-3",
+        firmwareVersion: "",
+        isInterestedDevices: "0"
+      },
+      paginator: {
+        page: 1,
+        pageSize: 5,
+        total: 0,
+        pageSizes: []
+      },
+      sorting: {
+        column: "",
+        direction: "asc"
+      },
+      searchTerm: "",
+      grouping: {
+        selectedRowIds: {},
+        itemIds: []
+      }
+    })
+  };
+}
+
+function handleGetIotStatuses(params) {
+  var props = PropertiesService.getScriptProperties();
+  var username = props.getProperty(CMSIOT_PROP_USER) || "";
+  var password = props.getProperty(CMSIOT_PROP_PASS) || "";
+  if (!username || !password) {
+    return {
+      status: "ok",
+      configured: false,
+      items: {}
+    };
+  }
+
+  var rawIds = params.ids ? String(params.ids).split(",") : [];
+  var uniqueIds = [];
+  var seen = {};
+  for (var i = 0; i < rawIds.length; i++) {
+    var id = rawIds[i].trim();
+    if (id && id !== "-" && !seen[id]) {
+      seen[id] = true;
+      uniqueIds.push(id);
+    }
+  }
+
+  if (uniqueIds.length === 0) {
+    return {
+      status: "ok",
+      configured: true,
+      checked_at: new Date().toISOString(),
+      items: {}
+    };
+  }
+
+  var force = params.force === "1" || params.force === true || params.force === "true";
+  var cache = CacheService.getScriptCache();
+  var resultItems = {};
+  var missingIds = [];
+
+  if (!force) {
+    try {
+      var cacheKeys = uniqueIds.map(function(id) { return CMSIOT_CACHE_KEY + "_" + id; });
+      var cachedMap = cache.getAll(cacheKeys);
+      for (i = 0; i < uniqueIds.length; i++) {
+        var cid = uniqueIds[i];
+        var raw = cachedMap[CMSIOT_CACHE_KEY + "_" + cid];
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed && parsed._notFound) {
+            // Đã kiểm tra gần đây nhưng không có trên CMS
+          } else if (parsed) {
+            resultItems[cid] = parsed;
+          }
+        } else {
+          missingIds.push(cid);
+        }
+      }
+    } catch (e) {
+      missingIds = uniqueIds.slice();
+    }
+  } else {
+    missingIds = uniqueIds.slice();
+  }
+
+  if (missingIds.length === 0) {
+    return {
+      status: "ok",
+      configured: true,
+      cached: true,
+      checked_at: new Date().toISOString(),
+      items: resultItems
+    };
+  }
+
+  var token = props.getProperty(CMSIOT_PROP_TOKEN) || "";
+  if (!token) {
+    var loginFirst = cmsIotLogin(username, password);
+    if (!loginFirst.ok) {
+      return errorResponse("Không thể đăng nhập SaigonIoT CMS: " + loginFirst.message);
+    }
+    token = loginFirst.token;
+    props.setProperty(CMSIOT_PROP_TOKEN, token);
+  }
+
+  var batchSize = 40;
+  var toCache = {};
+  var retriedAuth = false;
+
+  for (var start = 0; start < missingIds.length; start += batchSize) {
+    var batch = missingIds.slice(start, start + batchSize);
+    var reqs = batch.map(function(id) { return buildCmsIotFindRequest(token, id); });
+    var resps = UrlFetchApp.fetchAll(reqs);
+
+    // Nếu token hết hạn (401/403), đăng nhập lại 1 lần và thử lại batch hiện tại
+    if (!retriedAuth && resps.length > 0 && (resps[0].getResponseCode() === 401 || resps[0].getResponseCode() === 403)) {
+      retriedAuth = true;
+      var relogin = cmsIotLogin(username, password);
+      if (!relogin.ok) {
+        return errorResponse("Phiên SaigonIoT CMS hết hạn và đăng nhập lại thất bại: " + relogin.message);
+      }
+      token = relogin.token;
+      props.setProperty(CMSIOT_PROP_TOKEN, token);
+      reqs = batch.map(function(id) { return buildCmsIotFindRequest(token, id); });
+      resps = UrlFetchApp.fetchAll(reqs);
+    }
+
+    for (var j = 0; j < batch.length; j++) {
+      var targetId = batch[j];
+      var r = resps[j];
+      var code = r.getResponseCode();
+      if (code >= 200 && code < 300) {
+        try {
+          var json = JSON.parse(r.getContentText() || "{}");
+          var list = json.items || (json.data && json.data.items) || [];
+          var matched = null;
+          for (var k = 0; k < list.length; k++) {
+            if (String(list[k].deviceId || "").trim() === targetId) {
+              matched = list[k];
+              break;
+            }
+          }
+          if (!matched && list.length > 0) matched = list[0];
+          if (matched) {
+            var compact = buildCompactIotItem(matched);
+            resultItems[targetId] = compact;
+            toCache[CMSIOT_CACHE_KEY + "_" + targetId] = JSON.stringify(compact);
+          } else {
+            toCache[CMSIOT_CACHE_KEY + "_" + targetId] = JSON.stringify({ _notFound: true });
+          }
+        } catch (parseErr) {}
+      }
+    }
+  }
+
+  try {
+    if (Object.keys(toCache).length > 0) {
+      cache.putAll(toCache, 60);
+    }
+  } catch (e) {}
+
+  return {
+    status: "ok",
+    configured: true,
+    cached: false,
+    checked_at: new Date().toISOString(),
+    items: resultItems
+  };
 }
