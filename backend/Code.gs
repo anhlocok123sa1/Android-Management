@@ -17,6 +17,14 @@
 var SPREADSHEET_ID = "";
 
 /**
+ * Chạy hàm này 1 lần trong Apps Script Editor để cấp quyền kết nối ra ngoài (script.external_request).
+ */
+function CAP_QUYEN_SAIGONIOT() {
+  var resp = UrlFetchApp.fetch("https://cmsiot.saigoniot.vn:8081/assets/env.js", { muteHttpExceptions: true });
+  Logger.log("OK! Đã có quyền external_request. HTTP " + resp.getResponseCode());
+}
+
+/**
  * Lấy tham chiếu đến Spreadsheet hiện tại hoặc theo SPREADSHEET_ID.
  */
 function getSpreadsheet() {
@@ -886,6 +894,8 @@ function routeAction(action, params) {
       return handleSaveCmsIotConfig(params);
     case "get_cmsiot_config_status":
       return handleGetCmsIotConfigStatus();
+    case "iot_auth_status":
+      return { status: "ok", auth_required: getIotAuthStatusInfo().required };
 
     default:
       return errorResponse("Hành động không hợp lệ: " + action);
@@ -2681,18 +2691,48 @@ function cmsIotLogin(username, password) {
   }
 }
 
+function getIotAuthStatusInfo() {
+  try {
+    var authInfo = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL);
+    var required = authInfo.getAuthorizationStatus() === ScriptApp.AuthorizationStatus.REQUIRED;
+    return {
+      required: required,
+      authUrl: required ? (authInfo.getAuthorizationUrl() || "") : ""
+    };
+  } catch (e) {
+    return { required: false, authUrl: "" };
+  }
+}
+
+function iotAuthRequiredResponse(authInfo) {
+  return {
+    status: "error",
+    code: "IOT_AUTH_REQUIRED",
+    auth_required: true,
+    auth_url: (authInfo && authInfo.authUrl) || "",
+    message: "Apps Script chưa được cấp quyền script.external_request. Hãy bấm nút Cấp quyền Google Apps Script (hoặc chạy hàm CAP_QUYEN_SAIGONIOT trong Apps Script Editor)."
+  };
+}
+
 function handleGetCmsIotConfigStatus() {
   var props = PropertiesService.getScriptProperties();
   var u = props.getProperty(CMSIOT_PROP_USER) || "";
   var p = props.getProperty(CMSIOT_PROP_PASS) || "";
+  var authInfo = getIotAuthStatusInfo();
   return {
     status: "ok",
     configured: !!(u && p),
-    username_hint: u ? maskCmsIotUsername(u) : ""
+    username_hint: u ? maskCmsIotUsername(u) : "",
+    auth_required: authInfo.required,
+    auth_url: authInfo.authUrl
   };
 }
 
 function handleSaveCmsIotConfig(params) {
+  var authInfo = getIotAuthStatusInfo();
+  if (authInfo.required) {
+    return iotAuthRequiredResponse(authInfo);
+  }
   var u = String(params.username || "").trim();
   var p = String(params.password || "").trim();
   if (!u || !p) {
@@ -2700,6 +2740,10 @@ function handleSaveCmsIotConfig(params) {
   }
   var loginRes = cmsIotLogin(u, p);
   if (!loginRes.ok) {
+    var afterAuthInfo = getIotAuthStatusInfo();
+    if (afterAuthInfo.required || (loginRes.message && loginRes.message.indexOf("script.external_request") !== -1)) {
+      return iotAuthRequiredResponse(afterAuthInfo);
+    }
     return errorResponse("Đăng nhập SaigonIoT CMS thất bại: " + loginRes.message);
   }
   var props = PropertiesService.getScriptProperties();
@@ -2713,6 +2757,7 @@ function handleSaveCmsIotConfig(params) {
     status: "ok",
     configured: true,
     username_hint: maskCmsIotUsername(u),
+    auth_required: false,
     message: "Đã xác thực & lưu cấu hình SaigonIoT CMS an toàn trên server."
   };
 }
@@ -2782,6 +2827,11 @@ function handleGetIotStatuses(params) {
       configured: false,
       items: {}
     };
+  }
+
+  var authInfo = getIotAuthStatusInfo();
+  if (authInfo.required) {
+    return iotAuthRequiredResponse(authInfo);
   }
 
   var rawIds = params.ids ? String(params.ids).split(",") : [];

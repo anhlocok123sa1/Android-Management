@@ -493,6 +493,16 @@
         <p style="color:var(--text-secondary); font-size:12px; margin-bottom:14px;">
           Tài khoản &amp; mật khẩu được mã hóa/lưu trực tiếp trong <strong>Script Properties</strong> trên Google Apps Script (không bao giờ lưu trên trình duyệt hay GitHub).
         </p>
+        <div id="boxCmsIotAuthPrompt" style="display:none; background:rgba(245,158,11,0.12); border:1px solid var(--accent-amber); border-radius:8px; padding:12px 14px; margin-bottom:14px; font-size:13px;">
+          <div style="font-weight:700; color:var(--accent-amber); margin-bottom:6px;">⚠️ Apps Script cần bạn cấp quyền kết nối ra ngoài (chỉ 1 lần)</div>
+          <div style="color:var(--text-secondary); margin-bottom:10px;">
+            Google yêu cầu tài khoản chủ sở hữu Apps Script bấm cho phép quyền <code>script.external_request</code> để gọi API SaigonIoT CMS.
+          </div>
+          <a id="lnkCmsIotAuthUrl" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-amber" style="display:inline-block; text-decoration:none;">
+            🔐 Bấm Vào Đây Để Cấp Quyền Google Apps Script
+          </a>
+          <button type="button" class="btn btn-outline" style="margin-left:8px;" onclick="loadCmsIotConfigStatus()">🔄 Kiểm Tra Lại</button>
+        </div>
         <div class="form-row">
           <label>Tài khoản SaigonIoT CMS:</label>
           <input type="text" id="txtCmsIotUser" class="input-control mono" placeholder="Nhập tài khoản CMS IoT" autocomplete="off" />

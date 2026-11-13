@@ -858,12 +858,28 @@ async function refreshIotStatuses(force = false) {
   }
 }
 
+function updateCmsIotAuthPrompt(res) {
+  const box = document.getElementById("boxCmsIotAuthPrompt");
+  const lnk = document.getElementById("lnkCmsIotAuthUrl");
+  if (!box || !lnk) return;
+  if (res && res.auth_required && res.auth_url) {
+    lnk.href = res.auth_url;
+    box.style.display = "block";
+  } else {
+    box.style.display = "none";
+  }
+}
+
 async function loadCmsIotConfigStatus() {
   const lbl = document.getElementById("lblCmsIotStatus");
   if (!lbl) return;
   try {
     const res = await apiGet({ action: "get_cmsiot_config_status" });
-    if (res && res.status === "ok" && res.configured) {
+    updateCmsIotAuthPrompt(res);
+    if (res && res.auth_required) {
+      lbl.className = "badge badge-slow";
+      lbl.textContent = "🔑 Cần cấp quyền Apps Script";
+    } else if (res && res.status === "ok" && res.configured) {
       lbl.className = "badge badge-online";
       lbl.textContent = `🟢 Đã kết nối (${res.username_hint || "CMS IoT"})`;
     } else {
@@ -899,6 +915,7 @@ async function saveCmsIotConfig() {
       username,
       password
     });
+    updateCmsIotAuthPrompt(res);
     if (res && res.status === "ok") {
       if (passEl) passEl.value = "";
       showToast("🔐 " + (res.message || "Đã lưu cấu hình SaigonIoT CMS thành công!"));
