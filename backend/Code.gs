@@ -1532,14 +1532,17 @@ function handleRegisterDevice(params) {
 
 /**
  * POST action=update_iot_id
- * Cho phép Quản trị viên cập nhật hoặc sửa Mã IoT (iot_id) cho thiết bị theo AnyDesk ID hoặc MAC.
+ * Cho phép Quản trị viên cập nhật hoặc sửa Mã AnyDesk và Mã IoT (iot_id) cho thiết bị theo AnyDesk ID hoặc MAC.
  */
 function handleUpdateIotId(params) {
+  var oldAnydeskId = params.old_anydesk_id ? normalizeAnydeskId(params.old_anydesk_id) : "";
   var anydeskId = params.anydesk_id ? normalizeAnydeskId(params.anydesk_id) : "";
   var mac = params.mac ? String(params.mac).trim().replace(/[:\-]/g, "").toUpperCase() : "";
   var newIotId = params.iot_id !== undefined ? String(params.iot_id).trim() : "";
 
-  if (!anydeskId && !mac) {
+  var lookupAnydesk = oldAnydeskId || anydeskId;
+
+  if (!lookupAnydesk && !mac) {
     return errorResponse("Thiếu thông tin nhận diện thiết bị (cần anydesk_id hoặc mac)");
   }
 
@@ -1562,12 +1565,14 @@ function handleUpdateIotId(params) {
     var adColIdx = headers.indexOf("anydesk_id");
     var iotColIdx = headers.indexOf("iot_id");
 
-    if (iotColIdx === -1) {
-      return errorResponse("Sheet Devices thiếu cột iot_id.");
+    if (iotColIdx === -1 || adColIdx === -1) {
+      return errorResponse("Sheet Devices thiếu cột iot_id hoặc anydesk_id.");
     }
 
     var lastRow = devicesSheet.getLastRow();
     var targetRowIdx = -1;
+    var currentAdInRow = "";
+    var currentMacInRow = "";
 
     if (lastRow > 1) {
       var values = devicesSheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
@@ -1577,28 +1582,77 @@ function handleUpdateIotId(params) {
 
         if (mac && !isPlaceholderMac(mac) && rMac === mac) {
           targetRowIdx = i + 2;
+          currentAdInRow = rAd;
+          currentMacInRow = rMac;
+          break;
+        }
+        if (oldAnydeskId && (rAd === oldAnydeskId || rMac === ("CHUA_MAC_" + oldAnydeskId) || rMac === ("BOX_" + oldAnydeskId))) {
+          targetRowIdx = i + 2;
+          currentAdInRow = rAd;
+          currentMacInRow = rMac;
           break;
         }
         if (anydeskId && (rAd === anydeskId || rMac === ("CHUA_MAC_" + anydeskId) || rMac === ("BOX_" + anydeskId))) {
           targetRowIdx = i + 2;
+          currentAdInRow = rAd;
+          currentMacInRow = rMac;
           break;
         }
       }
     }
 
+    var effectiveOldAd = oldAnydeskId || currentAdInRow;
+
     if (targetRowIdx > 0) {
       devicesSheet.getRange(targetRowIdx, iotColIdx + 1).setValue(newIotId);
+
+      if (anydeskId) {
+        devicesSheet.getRange(targetRowIdx, adColIdx + 1).setValue(anydeskId);
+
+        if (isPlaceholderMac(currentMacInRow)) {
+          var newPlaceholderMac = "CHUA_MAC_" + anydeskId;
+          devicesSheet.getRange(targetRowIdx, macColIdx + 1).setValue(newPlaceholderMac);
+        }
+      }
     } else {
       // Nếu chưa có dòng nào, tự động thêm mới với AnyDesk / MAC và Mã IoT này
-      upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, {
-        mac: mac,
+      upsertDeviceByMacOrAnydesk(devicesSheet, mac || (anydeskId ? "CHUA_MAC_" + anydeskId : ""), anydeskId, {
+        mac: mac || (anydeskId ? "CHUA_MAC_" + anydeskId : ""),
         anydesk_id: anydeskId,
         iot_id: newIotId,
         project: "Kho thiết bị"
       });
     }
 
-    // Tự động đồng bộ cập nhật Mã IoT sang Sheet Dự Án và Sheet Final
+    // Nếu AnyDesk bị đổi sang mã mới, thay thế mã cũ trên tất cả các Sheet dữ liệu khác
+    if (effectiveOldAd && anydeskId && effectiveOldAd !== anydeskId) {
+      var ss = getSpreadsheet();
+      var allSheets = ss.getSheets();
+      for (var s = 0; s < allSheets.length; s++) {
+        var sh = allSheets[s];
+        var shName = String(sh.getName() || "").toLowerCase();
+        if (shName === "devices") continue;
+        var sLastRow = sh.getLastRow();
+        var sLastCol = sh.getLastColumn();
+        if (sLastRow === 0 || sLastCol === 0) continue;
+        var sRange = sh.getRange(1, 1, sLastRow, Math.min(sLastCol, 15));
+        var sValues = sRange.getValues();
+        var isModified = false;
+        for (var r = 0; r < sValues.length; r++) {
+          for (var c = 0; c < sValues[r].length; c++) {
+            if (normalizeAnydeskId(sValues[r][c]) === effectiveOldAd) {
+              sValues[r][c] = anydeskId;
+              isModified = true;
+            }
+          }
+        }
+        if (isModified) {
+          sRange.setValues(sValues);
+        }
+      }
+    }
+
+    // Tự động đồng bộ cập nhật Mã IoT & AnyDesk sang Sheet Dự Án và Sheet Final
     try {
       syncProjectSheets();
     } catch (syncErr) {
@@ -1607,8 +1661,9 @@ function handleUpdateIotId(params) {
 
     return {
       status: "ok",
-      message: "Đã cập nhật Mã IoT thành công: " + (newIotId || "(Đã xóa)"),
+      message: "Đã cập nhật AnyDesk & Mã IoT thành công!",
       mac: mac,
+      old_anydesk_id: effectiveOldAd,
       anydesk_id: anydeskId,
       iot_id: newIotId
     };

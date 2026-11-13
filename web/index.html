@@ -620,17 +620,28 @@
   </div>
 
   <!-- ===================================================================== -->
-  <!-- MODAL 4: SỬA MÃ IOT THIẾT BỊ                                          -->
+  <!-- MODAL 4: SỬA ANYDESK & MÃ IOT THIẾT BỊ                                -->
   <!-- ===================================================================== -->
   <div class="modal-backdrop" id="modalEditIot">
     <div class="modal-box" style="max-width:460px;">
-      <div class="modal-title">🏷️ Chỉnh Sửa Mã IoT Thiết Bị</div>
+      <div class="modal-title">🏷️ Chỉnh Sửa AnyDesk &amp; Mã IoT</div>
       <div class="form-row">
-        <label>Thiết bị đang chọn:</label>
-        <div id="lblEditIotDevice" class="mono" style="color:var(--accent-green); font-weight:700; font-size:15px; padding:8px 12px; background:var(--bg-input); border-radius:6px;">--</div>
+        <label>Thiết bị đang chọn (MAC):</label>
+        <div id="lblEditIotDevice" class="mono" style="color:var(--accent-green); font-weight:700; font-size:14px; padding:6px 12px; background:var(--bg-input); border-radius:6px;">--</div>
       </div>
       <input type="hidden" id="hidEditIotMac" />
-      <input type="hidden" id="hidEditIotAnydesk" />
+      <input type="hidden" id="hidEditIotOldAnydesk" />
+      <div class="form-row">
+        <label>Mã AnyDesk (9 - 10 chữ số):</label>
+        <input
+          type="text"
+          id="txtEditAnydeskValue"
+          class="input-control mono"
+          placeholder="Nhập AnyDesk ID mới (VD: 123456789)"
+          autocomplete="off"
+          onkeydown="if(event.key==='Enter') confirmSaveEditIot()"
+        />
+      </div>
       <div class="form-row">
         <label>Mã IoT (Quét bằng súng barcode hoặc gõ tay):</label>
         <input
@@ -643,12 +654,12 @@
         />
       </div>
       <div style="font-size:12px; color:var(--text-muted); margin-top:-6px; margin-bottom:12px;">
-        💡 Nhấn <b>Enter</b> hoặc bấm nút <b>Lưu Mã IoT</b> để cập nhật ngay lên Google Sheet &amp; In tem.
+        💡 Nhấn <b>Enter</b> hoặc bấm nút <b>Lưu Thay Đổi</b> để cập nhật ngay AnyDesk và Mã IoT.
       </div>
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
         <button class="btn btn-outline" onclick="closeModal('modalEditIot')">Hủy</button>
         <button class="btn btn-primary" id="btnSaveEditIot" onclick="confirmSaveEditIot()">
-          ✔ Lưu Mã IoT
+          ✔ Lưu Thay Đổi
         </button>
       </div>
     </div>
