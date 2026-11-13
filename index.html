@@ -229,23 +229,12 @@
             <option value="slow">🟡 Mạng Chậm</option>
             <option value="offline">🔴 Đang Offline</option>
           </select>
-
-          <select id="selFilterIotStatus" class="select-control" onchange="renderDeviceTable()">
-            <option value="ALL">🔌 IoT: TẤT CẢ</option>
-            <option value="online">🟢 IoT Online</option>
-            <option value="offline">🔴 IoT Offline / Lỗi</option>
-            <option value="warning">🟡 IoT Cảnh báo</option>
-            <option value="unknown">⚪ IoT Chưa rõ</option>
-          </select>
         </div>
 
         <div class="action-group">
           <span id="lblSelectedCount" class="mono" style="color:var(--accent-green); font-weight:700; margin-right:4px;">
             Đã chọn: 0
           </span>
-          <button class="btn btn-cyan" id="btnCheckIot" onclick="refreshIotStatuses(true)" title="Kiểm tra trạng thái Online/Offline từ SaigonIoT CMS">
-            🔌 Check IoT
-          </button>
           <button class="btn btn-amber" onclick="openAssignProjectModal()">
             📁 Gán Dự Án
           </button>
@@ -482,37 +471,6 @@
           <button class="btn btn-primary" onclick="saveSettings()">💾 Lưu Cấu Hình</button>
           <button class="btn btn-cyan" onclick="resetDefaultSettings()">🔄 Khôi Phục Mặc Định</button>
           <button class="btn btn-amber" onclick="syncSheetsOnCloud()">🔀 Đồng Bộ Tách Sheet Ngay</button>
-        </div>
-
-        <hr style="border:none; border-top:1px solid var(--border-color); margin:24px 0;" />
-
-        <div class="panel-header" style="margin-bottom:12px;">
-          <div class="panel-title">🔌 KẾT NỐI SAIGONIOT CMS (KIỂM TRA IOT ONLINE KHI QA)</div>
-          <span id="lblCmsIotStatus" class="badge badge-slow">Đang kiểm tra...</span>
-        </div>
-        <p style="color:var(--text-secondary); font-size:12px; margin-bottom:14px;">
-          Tài khoản &amp; mật khẩu được mã hóa/lưu trực tiếp trong <strong>Script Properties</strong> trên Google Apps Script (không bao giờ lưu trên trình duyệt hay GitHub).
-        </p>
-        <div id="boxCmsIotAuthPrompt" style="display:none; background:rgba(245,158,11,0.12); border:1px solid var(--accent-amber); border-radius:8px; padding:12px 14px; margin-bottom:14px; font-size:13px;">
-          <div style="font-weight:700; color:var(--accent-amber); margin-bottom:6px;">⚠️ Apps Script cần bạn cấp quyền kết nối ra ngoài (chỉ 1 lần)</div>
-          <div style="color:var(--text-secondary); margin-bottom:10px;">
-            Google yêu cầu tài khoản chủ sở hữu Apps Script bấm cho phép quyền <code>script.external_request</code> để gọi API SaigonIoT CMS.
-          </div>
-          <a id="lnkCmsIotAuthUrl" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-amber" style="display:inline-block; text-decoration:none;">
-            🔐 Bấm Vào Đây Để Cấp Quyền Google Apps Script
-          </a>
-          <button type="button" class="btn btn-outline" style="margin-left:8px;" onclick="loadCmsIotConfigStatus()">🔄 Kiểm Tra Lại</button>
-        </div>
-        <div class="form-row">
-          <label>Tài khoản SaigonIoT CMS:</label>
-          <input type="text" id="txtCmsIotUser" class="input-control mono" placeholder="Nhập tài khoản CMS IoT" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <label>Mật khẩu SaigonIoT CMS:</label>
-          <input type="password" id="txtCmsIotPass" class="input-control mono" placeholder="Nhập mật khẩu CMS IoT (chỉ gửi 1 lần lên server)" autocomplete="new-password" />
-        </div>
-        <div style="display:flex; gap:10px; margin-top:14px;">
-          <button class="btn btn-success" id="btnSaveCmsIot" onclick="saveCmsIotConfig()">🔐 Lưu &amp; Kiểm Tra Kết Nối IoT</button>
         </div>
       </div>
     </section>

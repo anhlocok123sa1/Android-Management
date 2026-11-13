@@ -17,10 +17,7 @@ let state = {
   tasks: [],
   selectedMacs: new Set(),
   filteredDevices: [],
-  recentlyAddedKeys: new Set(),
-  iotStatuses: {},
-  iotConfigured: null,
-  iotLoading: false
+  recentlyAddedKeys: new Set()
 };
 
 // Đọc tham số URL chia sẻ nhanh nếu có: ?printer=https://...
@@ -571,8 +568,6 @@ function switchTab(tabId) {
   if (tabId === "tab-deploy") {
     syncSelectedMacsToDeployBox();
     loadTasksQueue();
-  } else if (tabId === "tab-settings") {
-    loadCmsIotConfigStatus();
   }
 }
 
@@ -627,9 +622,6 @@ async function refreshAllData() {
 
     const nowStr = new Date().toLocaleTimeString("vi-VN");
     lblSync.textContent = `Đã đồng bộ: ${nowStr} (${state.devices.length} box)`;
-
-    // Kiểm tra trạng thái IoT từ SaigonIoT CMS ở chế độ nền
-    refreshIotStatuses(false);
   } catch (err) {
     console.error("refreshAllData error:", err);
     lblSync.textContent = "⚠️ Lỗi kết nối Cloud";
@@ -750,190 +742,6 @@ function evaluateDeviceStatus(dev) {
   }
 }
 
-function evaluateIotStatus(iotIdRaw) {
-  const iotId = String(iotIdRaw || "").trim();
-  if (!iotId || iotId === "-") {
-    return { tag: "unknown", dot: "⚪", label: "Chưa có", cls: "", tooltip: "Chưa gắn mã IoT" };
-  }
-  if (state.iotLoading && !state.iotStatuses[iotId]) {
-    return { tag: "unknown", dot: "⏳", label: "Đang check...", cls: "badge-slow", tooltip: "Đang kiểm tra trên SaigonIoT CMS..." };
-  }
-  if (state.iotConfigured === false) {
-    return { tag: "unknown", dot: "⚙️", label: "Chưa cấu hình", cls: "badge-slow", tooltip: "Vào Cài Đặt để kết nối tài khoản SaigonIoT CMS" };
-  }
-  const info = state.iotStatuses[iotId];
-  if (!info) {
-    return { tag: "unknown", dot: "⚪", label: "Không thấy", cls: "", tooltip: "Không tìm thấy mã IoT này trên SaigonIoT CMS" };
-  }
-
-  const parts = [];
-  if (info.name) parts.push(`Tên: ${info.name}`);
-  if (info.signal !== null && info.signal !== undefined) parts.push(`Sóng 4G: ${info.signal}`);
-  if (info.temp !== null && info.temp !== undefined) {
-    const t = Number(info.temp).toFixed(1);
-    const h = info.humidity !== null && info.humidity !== undefined ? Number(info.humidity).toFixed(1) : "-";
-    parts.push(`Nhiệt độ/Độ ẩm: ${t}°C - ${h}%`);
-  }
-  if (info.firmware) parts.push(`FW: ${info.firmware}`);
-  if (info.last_ping) parts.push(`Cập nhật cuối: ${info.last_ping}`);
-  const tooltip = parts.join(" | ");
-
-  switch (Number(info.status)) {
-    case 1:
-      return { tag: "online", dot: "🟢", label: "IoT Online", cls: "badge-online", tooltip };
-    case 0:
-      return { tag: "warning", dot: "🟡", label: "Cảnh báo", cls: "badge-slow", tooltip };
-    case 2:
-      return { tag: "warning", dot: "🔵", label: "Báo động", cls: "badge-slow", tooltip };
-    case -1:
-      return { tag: "offline", dot: "🔴", label: "IoT Lỗi", cls: "badge-offline", tooltip };
-    case 3:
-      return { tag: "offline", dot: "⚪", label: "Chưa kích hoạt", cls: "badge-offline", tooltip };
-    case -2:
-    default:
-      return { tag: "offline", dot: "🔴", label: "IoT Offline", cls: "badge-offline", tooltip };
-  }
-}
-
-async function refreshIotStatuses(force = false) {
-  const btn = document.getElementById("btnCheckIot");
-  const ids = Array.from(new Set(
-    state.devices
-      .map(d => String(d.iot_id || d.iot || "").trim())
-      .filter(id => id && id !== "-")
-  ));
-
-  if (ids.length === 0) {
-    if (force) showToast("Chưa có thiết bị nào gắn Mã IoT để kiểm tra.");
-    return;
-  }
-
-  state.iotLoading = true;
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "⏳ Đang check IoT...";
-  }
-  renderDeviceTable();
-
-  try {
-    const res = await apiPost({
-      action: "get_iot_statuses",
-      force: !!force,
-      ids: ids.join(",")
-    });
-    state.iotLoading = false;
-
-    if (res && res.status === "ok") {
-      state.iotConfigured = res.configured !== false;
-      if (res.configured === false) {
-        if (force) {
-          showToast("⚠️ Chưa cấu hình tài khoản SaigonIoT CMS. Hãy vào tab Cài Đặt để kết nối.", true);
-        }
-      } else {
-        state.iotStatuses = res.items || {};
-        if (force) {
-          let on = 0, off = 0, warn = 0;
-          ids.forEach(id => {
-            const st = evaluateIotStatus(id);
-            if (st.tag === "online") on++;
-            else if (st.tag === "offline") off++;
-            else if (st.tag === "warning") warn++;
-          });
-          showToast(`🔌 Kết quả IoT: ${on} Online | ${off} Offline${warn ? ` | ${warn} Cảnh báo` : ""}`);
-        }
-      }
-    } else if (force) {
-      showToast("❌ Lỗi kiểm tra IoT: " + (res && res.message ? res.message : "Không rõ lỗi"), true);
-    }
-  } catch (err) {
-    state.iotLoading = false;
-    console.error("refreshIotStatuses error:", err);
-    if (force) showToast("❌ Không thể kiểm tra IoT: " + err.message, true);
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = "🔌 Check IoT";
-    }
-    renderDeviceTable();
-  }
-}
-
-function updateCmsIotAuthPrompt(res) {
-  const box = document.getElementById("boxCmsIotAuthPrompt");
-  const lnk = document.getElementById("lnkCmsIotAuthUrl");
-  if (!box || !lnk) return;
-  if (res && res.auth_required && res.auth_url) {
-    lnk.href = res.auth_url;
-    box.style.display = "block";
-  } else {
-    box.style.display = "none";
-  }
-}
-
-async function loadCmsIotConfigStatus() {
-  const lbl = document.getElementById("lblCmsIotStatus");
-  if (!lbl) return;
-  try {
-    const res = await apiGet({ action: "get_cmsiot_config_status" });
-    updateCmsIotAuthPrompt(res);
-    if (res && res.auth_required) {
-      lbl.className = "badge badge-slow";
-      lbl.textContent = "🔑 Cần cấp quyền Apps Script";
-    } else if (res && res.status === "ok" && res.configured) {
-      lbl.className = "badge badge-online";
-      lbl.textContent = `🟢 Đã kết nối (${res.username_hint || "CMS IoT"})`;
-    } else {
-      lbl.className = "badge badge-slow";
-      lbl.textContent = "⚪ Chưa cấu hình";
-    }
-  } catch (e) {
-    lbl.className = "badge badge-offline";
-    lbl.textContent = "⚠️ Lỗi kiểm tra";
-  }
-}
-
-async function saveCmsIotConfig() {
-  const userEl = document.getElementById("txtCmsIotUser");
-  const passEl = document.getElementById("txtCmsIotPass");
-  const btn = document.getElementById("btnSaveCmsIot");
-  const username = (userEl ? userEl.value : "").trim();
-  const password = (passEl ? passEl.value : "").trim();
-
-  if (!username || !password) {
-    showToast("Vui lòng nhập đầy đủ Tài khoản và Mật khẩu SaigonIoT CMS.", true);
-    return;
-  }
-
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "⏳ Đang xác thực với CMS IoT...";
-  }
-
-  try {
-    const res = await apiPost({
-      action: "save_cmsiot_config",
-      username,
-      password
-    });
-    updateCmsIotAuthPrompt(res);
-    if (res && res.status === "ok") {
-      if (passEl) passEl.value = "";
-      showToast("🔐 " + (res.message || "Đã lưu cấu hình SaigonIoT CMS thành công!"));
-      await loadCmsIotConfigStatus();
-      await refreshIotStatuses(true);
-    } else {
-      showToast("❌ " + (res && res.message ? res.message : "Đăng nhập CMS IoT thất bại"), true);
-    }
-  } catch (err) {
-    showToast("❌ Lỗi kết nối: " + err.message, true);
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = "🔐 Lưu & Kiểm Tra Kết Nối IoT";
-    }
-  }
-}
-
 function formatRelativeTime(lastSeenStr, mins) {
   if (!lastSeenStr || mins >= 999999) return "Chưa kết nối";
   if (mins < 1) return "Vừa xong";
@@ -1039,7 +847,6 @@ function renderDeviceTable() {
   const fProj = document.getElementById("selFilterProject").value;
   const fSoft = document.getElementById("selFilterSoftware").value;
   const fStat = document.getElementById("selFilterStatus").value;
-  const fIot = document.getElementById("selFilterIotStatus") ? document.getElementById("selFilterIotStatus").value : "ALL";
 
   const tbody = document.getElementById("deviceTableBody");
 
@@ -1047,12 +854,10 @@ function renderDeviceTable() {
     const proj = (d.project || "Kho thiết bị").trim();
     const soft = (d.software || "Radio 3.6").trim();
     const st = evaluateDeviceStatus(d);
-    const iotSt = evaluateIotStatus(d.iot_id || d.iot);
 
     if (fProj !== "ALL" && proj !== fProj) return false;
     if (fSoft !== "ALL" && !soft.toLowerCase().includes(fSoft.toLowerCase())) return false;
     if (fStat !== "ALL" && st.tag !== fStat) return false;
-    if (fIot !== "ALL" && iotSt.tag !== fIot) return false;
 
     if (q) {
       const hay = `${d.mac} ${d.anydesk_id} ${d.iot_id || ""} ${proj} ${soft} ${d.mac_ics || ""} ${d.notes || ""}`.toLowerCase();
@@ -1161,17 +966,10 @@ function renderDeviceTable() {
           </span>
         </td>
         <td class="mono">
-          <div style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
+          <div style="display:inline-flex; align-items:center; gap:6px;">
             ${iotId !== "-" 
-              ? (() => {
-                  const iotSt = evaluateIotStatus(iotId);
-                  const badgeHtml = iotSt.cls
-                    ? `<span class="badge ${iotSt.cls}" style="font-size:10px; padding:2px 6px;" title="${escapeHtml(iotSt.tooltip)}">${iotSt.dot} ${iotSt.label}</span>`
-                    : `<span style="font-size:11px; color:var(--text-muted);" title="${escapeHtml(iotSt.tooltip)}">${iotSt.dot}</span>`;
-                  return `<span class="copy-chip" style="color:var(--accent-cyan); font-weight:700;" onclick="copyText('${safeIot}', 'Đã chép Mã IoT: ${safeIot}')" title="Bấm để sao chép Mã IoT">${safeIot}</span>
-                          ${badgeHtml}
-                          <span role="button" tabindex="0" style="cursor:pointer; font-size:13px; opacity:0.75; padding:2px 4px; border-radius:4px;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.75'" onclick="openEditIotModal('${safeMac}', '${safeAd}', '${escapeHtml(d.iot_id || '')}')" title="Bấm cây bút để sửa AnyDesk &amp; Mã IoT">✏️</span>`;
-                })()
+              ? `<span class="copy-chip" style="color:var(--accent-cyan); font-weight:700;" onclick="copyText('${safeIot}', 'Đã chép Mã IoT: ${safeIot}')" title="Bấm để sao chép Mã IoT">${safeIot}</span>
+                 <span role="button" tabindex="0" style="cursor:pointer; font-size:13px; opacity:0.75; padding:2px 4px; border-radius:4px;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.75'" onclick="openEditIotModal('${safeMac}', '${safeAd}', '${escapeHtml(d.iot_id || '')}')" title="Bấm cây bút để sửa AnyDesk &amp; Mã IoT">✏️</span>` 
               : `<span role="button" tabindex="0" style="cursor:pointer; color:var(--text-muted); font-size:12px; border-bottom:1px dashed var(--text-muted); padding:1px 4px;" onclick="openEditIotModal('${safeMac}', '${safeAd}', '')" title="Bấm để thêm AnyDesk / Mã IoT">➕ Thêm IoT</span>`
             }
           </div>
