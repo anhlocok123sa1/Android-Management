@@ -34,10 +34,32 @@ try {
 } catch (e) {}
 
 // ============================================================================
-// THEME SWITCHER (DARK / LIGHT MODE)
+// THEME SWITCHER (DARK / LIGHT MODE — MODERN WEB GUIDANCE)
 // ============================================================================
+const colorSchemeMedia = window.matchMedia("(prefers-color-scheme: dark)");
+
+function getSystemTheme() {
+  return colorSchemeMedia.matches ? "dark" : "light";
+}
+
+function getStoredThemeOverride() {
+  try {
+    const val = localStorage.getItem("sgl_theme");
+    return val === "light" || val === "dark" ? val : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function getCurrentTheme() {
-  return document.documentElement.getAttribute("data-theme") || localStorage.getItem("sgl_theme") || "dark";
+  return getStoredThemeOverride() || getSystemTheme();
+}
+
+function syncColorSchemeMeta(override) {
+  const meta = document.querySelector('meta[name="color-scheme"]');
+  if (meta) {
+    meta.content = override === "light" || override === "dark" ? override : "light dark";
+  }
 }
 
 function updateThemeButtons(theme) {
@@ -58,19 +80,41 @@ function updateThemeButtons(theme) {
 }
 
 function toggleTheme() {
-  const current = getCurrentTheme();
-  const next = current === "light" ? "dark" : "light";
-  document.documentElement.setAttribute("data-theme", next);
+  const currentRendered = getCurrentTheme();
+  const next = currentRendered === "light" ? "dark" : "light";
+  const sysTheme = getSystemTheme();
+
   try {
-    localStorage.setItem("sgl_theme", next);
-  } catch (e) {}
+    if (next === sysTheme) {
+      localStorage.removeItem("sgl_theme");
+      syncColorSchemeMeta(null);
+    } else {
+      localStorage.setItem("sgl_theme", next);
+      syncColorSchemeMeta(next);
+    }
+  } catch (e) {
+    syncColorSchemeMeta(next);
+  }
+
   updateThemeButtons(next);
   if (typeof showToast === "function") {
     showToast(next === "light" ? "☀️ Đã chuyển sang Giao diện Sáng" : "🌙 Đã chuyển sang Giao diện Tối");
   }
 }
 
+window.addEventListener("storage", (e) => {
+  if (e.key === "sgl_theme" || e.key === null) {
+    syncColorSchemeMeta(getStoredThemeOverride());
+    updateThemeButtons(getCurrentTheme());
+  }
+});
+
+colorSchemeMedia.addEventListener("change", () => {
+  updateThemeButtons(getCurrentTheme());
+});
+
 try {
+  syncColorSchemeMeta(getStoredThemeOverride());
   updateThemeButtons(getCurrentTheme());
 } catch (e) {}
 
