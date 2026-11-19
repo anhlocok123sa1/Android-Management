@@ -280,10 +280,10 @@ public class MainActivity extends Activity {
         root.addView(utilRow);
 
         // =====================================================================
-        // NÚT 1-CHẠM: ĐỒNG BỘ SHEET + TẮT WIFI 4G (192.168.8.1) + TỰ XÓA APP
+        // NÚT 1-CHẠM: TẮT WIFI 4G (192.168.8.1) + TỰ XÓA APP
         // =====================================================================
         btnSyncWifiAndDelete = new Button(this);
-        btnSyncWifiAndDelete.setText("⚡ ĐỒNG BỘ SHEET + TẮT WIFI 4G (192.168.8.1) + TỰ XÓA 00_AUTOSETUP");
+        btnSyncWifiAndDelete.setText("⚡ TẮT WIFI 4G (192.168.8.1) + TỰ XÓA 00_AUTOSETUP");
         btnSyncWifiAndDelete.setBackgroundColor(Color.parseColor("#FF6F00"));
         btnSyncWifiAndDelete.setTextColor(Color.WHITE);
         btnSyncWifiAndDelete.setPadding(14, 16, 14, 16);
@@ -291,7 +291,7 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         comboParams.setMargins(5, 2, 5, 8);
         btnSyncWifiAndDelete.setLayoutParams(comboParams);
-        btnSyncWifiAndDelete.setOnClickListener(v -> new Thread(this::runSyncDisableWifiAndSelfDelete).start());
+        btnSyncWifiAndDelete.setOnClickListener(v -> new Thread(this::runDisableWifiAndSelfDelete).start());
         root.addView(btnSyncWifiAndDelete);
 
         ScrollView scroll = new ScrollView(this);
@@ -445,28 +445,20 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Quy trình 1-chạm: Đồng bộ Box lên Sheet -> Tắt Wi-Fi 4G (192.168.8.1) -> Tự xóa 00_AutoSetup.
-     * Nếu bước Đồng bộ hoặc bước Tắt Wi-Fi 4G thất bại thì DỪNG LẠI và KHÔNG xóa app để kỹ thuật viên kiểm tra.
+     * Quy trình 1-chạm: Tắt Wi-Fi 4G (192.168.8.1) -> Tự xóa 00_AutoSetup.
+     * Nếu bước Tắt Wi-Fi 4G thất bại thì DỪNG LẠI và KHÔNG xóa app để kỹ thuật viên kiểm tra.
      */
-    private void runSyncDisableWifiAndSelfDelete() {
+    private void runDisableWifiAndSelfDelete() {
         setButtonsEnabled(false);
         log("==================================================");
-        log("⚡ [1-CHẠM] BẮT ĐẦU: ĐỒNG BỘ SHEET -> TẮT WIFI 4G -> TỰ XÓA 00_AUTOSETUP");
-        log(">>> [GIAI ĐOẠN 1/3] Đang đồng bộ AnyDesk + MAC + App lên Google Sheet...");
+        log("⚡ [1-CHẠM] BẮT ĐẦU: TẮT WIFI 4G (192.168.8.1) -> TỰ XÓA 00_AUTOSETUP");
+        log(">>> [GIAI ĐOẠN 1/2] Đang tắt Wi-Fi 4G (192.168.8.1)...");
 
-        boolean synced = syncOldBoxToSheet(false, false);
-        if (!synced) {
-            log("❌ [DỪNG] Đồng bộ Google Sheet chưa thành công -> KHÔNG tắt Wi-Fi và KHÔNG xóa 00_AutoSetup!");
-            setButtonsEnabled(true);
-            return;
-        }
-
-        log("✔ [GIAI ĐOẠN 1/3] Đồng bộ Sheet THÀNH CÔNG! Chuyển sang GIAI ĐOẠN 2/3: Tắt Wi-Fi 4G (192.168.8.1)...");
         runDisableSmartWifi4G(
                 () -> {
-                    log("✔ [GIAI ĐOẠN 2/3] Đã tắt Wi-Fi 4G thành công! Chờ 2.5 giây trước khi tự xóa 00_AutoSetup...");
+                    log("✔ [GIAI ĐOẠN 1/2] Đã tắt Wi-Fi 4G thành công! Chờ 2.5 giây trước khi tự xóa 00_AutoSetup...");
                     mainHandler.postDelayed(() -> new Thread(() -> {
-                        log(">>> [GIAI ĐOẠN 3/3] Đang tự xóa 00_AutoSetup...");
+                        log(">>> [GIAI ĐOẠN 2/2] Đang tự xóa 00_AutoSetup...");
                         uninstallSelfApp();
                     }).start(), 2500L);
                 },
