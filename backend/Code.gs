@@ -2816,14 +2816,14 @@ function handleSaveExternalSheetConfig(params) {
   var startRow = parseInt(params.start_row || "2", 10);
   if (isNaN(startRow) || startRow < 1) startRow = 2;
 
-  if (enabled) {
+  if (enabled || sheetUrl) {
     if (!spreadsheetId) {
       return errorResponse("Link hoặc ID Google Sheet đích không hợp lệ!");
     }
     if (!colAnydesk && !colMac && !colIot && !colIcs) {
       return errorResponse("Vui lòng nhập ít nhất 1 cột (AnyDesk, MAC, IoT hoặc ICS)!");
     }
-    // Kiểm tra quyền truy cập ngay khi lưu
+    // Kiểm tra quyền truy cập ngay khi lưu (kể cả khi chỉ dùng chế độ đẩy thủ công)
     try {
       var targetSs = SpreadsheetApp.openById(spreadsheetId);
       if (sheetName) {
@@ -2854,8 +2854,10 @@ function handleSaveExternalSheetConfig(params) {
     status: "ok",
     config: cfg,
     message: enabled
-      ? "Đã lưu & xác thực kết nối Google Sheet đích thành công!"
-      : "Đã lưu cấu hình (Đang tạm tắt đồng bộ tự động)."
+      ? "Đã lưu & xác thực Google Sheet đích (Tự động đồng bộ: BẬT)!"
+      : (spreadsheetId
+          ? "Đã lưu & xác thực Google Sheet đích (Chế độ Thủ công — bấm 'Đẩy Sheet Ngoài' khi cần)!"
+          : "Đã lưu cấu hình (Chưa thiết lập Sheet ngoài).")
   };
 }
 
@@ -2864,9 +2866,12 @@ function handleSaveExternalSheetConfig(params) {
  * Tự động tìm dòng đã có theo AnyDesk / MAC / IoT; nếu chưa có thì điền vào dòng trống đầu tiên
  * (bỏ qua cột STT đã đánh số sẵn).
  */
-function trySyncDeviceToExternalSheet(deviceObj) {
+function trySyncDeviceToExternalSheet(deviceObj, forceManual) {
   var cfg = getExternalSheetConfigObj();
-  if (!cfg || !cfg.enabled || !cfg.spreadsheet_id) {
+  if (!cfg || !cfg.spreadsheet_id) {
+    return { synced: false, reason: "not_configured" };
+  }
+  if (!forceManual && !cfg.enabled) {
     return { synced: false, reason: "disabled" };
   }
 
@@ -2972,8 +2977,8 @@ function trySyncDeviceToExternalSheet(deviceObj) {
  */
 function handleSyncDeviceToExternalSheet(params) {
   var cfg = getExternalSheetConfigObj();
-  if (!cfg || !cfg.enabled || !cfg.spreadsheet_id) {
-    return errorResponse("Chưa bật hoặc chưa cấu hình Google Sheet đích trong mục Cấu Hình!");
+  if (!cfg || !cfg.spreadsheet_id) {
+    return errorResponse("Chưa cấu hình Link Google Sheet đích trong mục Cấu Hình!");
   }
 
   var devicesList = [];
@@ -2999,16 +3004,30 @@ function handleSyncDeviceToExternalSheet(params) {
 
   var syncedCount = 0;
   var lastResult = null;
+  var lastReason = "";
   for (var i = 0; i < devicesList.length && i < 50; i++) {
     try {
-      var res = trySyncDeviceToExternalSheet(devicesList[i]);
+      var res = trySyncDeviceToExternalSheet(devicesList[i], true);
       if (res && res.synced) {
         syncedCount++;
         lastResult = res;
+      } else if (res && res.reason) {
+        lastReason = res.reason;
       }
     } catch (e) {
       return errorResponse("Lỗi ghi Sheet ngoài: " + e.message);
     }
+  }
+
+  if (syncedCount === 0) {
+    if (lastReason.indexOf("sheet_not_found:") === 0) {
+      var missingTab = lastReason.substring("sheet_not_found:".length);
+      return errorResponse("Không tìm thấy tab tên '" + missingTab + "' trong Google Sheet đích! Hãy kiểm tra lại Tên Sheet (Tab) trong mục Cấu Hình.");
+    }
+    if (lastReason === "no_columns") {
+      return errorResponse("Chưa cấu hình cột nào (AnyDesk / MAC / IoT / ICS) trong mục Cấu Hình!");
+    }
+    return errorResponse("Không thể ghi dữ liệu sang Sheet ngoài (" + (lastReason || "không có dữ liệu hợp lệ") + ").");
   }
 
   return {
@@ -3016,7 +3035,7 @@ function handleSyncDeviceToExternalSheet(params) {
     synced_count: syncedCount,
     last_row: lastResult ? lastResult.row : null,
     sheet_name: lastResult ? lastResult.sheet_name : "",
-    message: "Đã đồng bộ " + syncedCount + " thiết bị sang Sheet '" + (lastResult ? lastResult.sheet_name : "") + "'!"
+    message: "Đã đẩy " + syncedCount + " thiết bị sang Sheet '" + (lastResult ? lastResult.sheet_name : "") + "' (dòng " + (lastResult ? lastResult.row : "?") + ")!"
   };
 }
 

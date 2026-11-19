@@ -87,6 +87,16 @@ def open_anydesk_session(ad_id: str, password: str = DEFAULT_ANYDESK_PASS, clipb
             clipboard_fn(password)
         except Exception:
             pass
+    elif os.name == "nt" and password:
+        try:
+            subprocess.run(
+                ["clip"],
+                input=str(password).encode("utf-8"),
+                check=False,
+                creationflags=0x08000000,
+            )
+        except Exception:
+            pass
 
     exe = get_anydesk_exe()
     if not exe:
