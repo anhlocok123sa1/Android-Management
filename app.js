@@ -2075,10 +2075,13 @@ async function loadExternalSheetConfig() {
       if (badge) {
         if (c.enabled && c.spreadsheet_id) {
           badge.className = "badge badge-online";
-          badge.textContent = `🟢 Đang bật (${c.sheet_name || "Theo Dự Án"})`;
+          badge.textContent = `🟢 Tự động (${c.sheet_name || "Theo Dự Án"})`;
+        } else if (c.spreadsheet_id) {
+          badge.className = "badge badge-slow";
+          badge.textContent = `🟡 Thủ công (${c.sheet_name || "Theo Dự Án"})`;
         } else {
           badge.className = "badge badge-slow";
-          badge.textContent = "⚪ Đang tắt";
+          badge.textContent = "⚪ Chưa cấu hình";
         }
       }
     }
