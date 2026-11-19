@@ -92,11 +92,12 @@ class SGLWebHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
 
     def do_OPTIONS(self):
-        """Xử lý CORS preflight request cho Web từ xa gọi về (GitHub Pages)."""
+        """Xử lý CORS & Private Network Access preflight cho Web từ xa (GitHub Pages) gọi về localhost."""
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -127,8 +128,10 @@ class SGLWebHandler(http.server.SimpleHTTPRequestHandler):
                     webhook_url=data.get("webhook_url", ""),
                 )
                 synced = False
-                if ok and ACTIVE_TUNNEL_URL and not TUNNEL_CLOUD_SYNCED:
-                    synced, _ = push_tunnel_url_to_cloud(ACTIVE_TUNNEL_URL)
+                if ok:
+                    print("  🔐 ĐÃ LƯU TOKEN CỤC BỘ (.sgl_local_token) THÀNH CÔNG!")
+                    if ACTIVE_TUNNEL_URL and not TUNNEL_CLOUD_SYNCED:
+                        synced, _ = push_tunnel_url_to_cloud(ACTIVE_TUNNEL_URL)
                 resp = {
                     "status": "ok" if ok else "error",
                     "tunnel_url": ACTIVE_TUNNEL_URL,
@@ -181,6 +184,7 @@ class SGLWebHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body_bytes)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
         self.wfile.write(body_bytes)
 
