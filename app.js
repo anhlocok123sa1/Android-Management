@@ -19,7 +19,8 @@ let state = {
   filteredDevices: [],
   recentlyAddedKeys: new Set(),
   iotStatusMap: {},
-  cmsIotConfigured: false
+  cmsIotConfigured: false,
+  localTokenSynced: false
 };
 
 // Đọc tham số URL chia sẻ nhanh nếu có: ?printer=https://...
@@ -671,6 +672,9 @@ async function refreshAllData() {
 
     const nowStr = new Date().toLocaleTimeString("vi-VN");
     lblSync.textContent = `Đã đồng bộ: ${nowStr} (${state.devices.length} box)`;
+    if (!state.localTokenSynced) {
+      autoSyncLocalTunnel();
+    }
   } catch (err) {
     console.error("refreshAllData error:", err);
     lblSync.textContent = "⚠️ Lỗi kết nối Cloud";
@@ -1118,7 +1122,7 @@ async function connectAnyDesk(adId) {
   // Thử gọi Local Python Web Server (/api/open_anydesk) nếu đang chạy trên PC xưởng (hỗ trợ cả khi mở qua GitHub Pages)
   const localEndpoints = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
     ? ["/api/open_anydesk"]
-    : ["http://127.0.0.1:8080/api/open_anydesk"];
+    : ["http://localhost:8080/api/open_anydesk", "http://127.0.0.1:8080/api/open_anydesk"];
 
   for (const ep of localEndpoints) {
     try {
@@ -1991,49 +1995,61 @@ async function autoSyncLocalTunnel() {
   const sess = getStoredAuthSession();
   if (!sess) return;
 
-  const baseUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
-    ? window.location.origin
-    : "http://127.0.0.1:8080";
+  const baseCandidates = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? [window.location.origin]
+    : ["http://localhost:8080", "http://127.0.0.1:8080"];
 
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 1800);
-    const infoResp = await fetch(`${baseUrl}/api/tunnel_info`, { signal: ctrl.signal });
-    clearTimeout(timer);
-    if (!infoResp.ok) return;
-    const info = await infoResp.json();
+  for (const baseUrl of baseCandidates) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2000);
+      const infoResp = await fetch(`${baseUrl}/api/tunnel_info`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!infoResp.ok) continue;
+      const info = await infoResp.json();
 
-    // 1. Gửi token Admin cho server local lưu vào .sgl_local_token để lần sau bật .bat tự đẩy không cần mở trình duyệt
-    fetch(`${baseUrl}/api/sync_admin_token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        auth_token: sess.token || "",
-        legacy_token: sess.legacyToken || "",
-        webhook_url: state.webhookUrl || DEFAULT_WEBHOOK_URL
-      })
-    }).catch(() => {});
+      // 1. Gửi token Admin cho server local lưu vào .sgl_local_token để lần sau bật .bat tự đẩy không cần mở trình duyệt
+      try {
+        const tokResp = await fetch(`${baseUrl}/api/sync_admin_token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            auth_token: sess.token || "",
+            legacy_token: sess.legacyToken || "",
+            webhook_url: state.webhookUrl || DEFAULT_WEBHOOK_URL
+          })
+        });
+        if (tokResp.ok) {
+          const tokData = await tokResp.json();
+          if (tokData && tokData.status === "ok" && !state.localTokenSynced) {
+            state.localTokenSynced = true;
+            showToast("🔐 Đã liên kết máy xưởng — từ lần bật sau sẽ tự đẩy Cloudflare Tunnel!");
+          }
+        }
+      } catch (e) {}
 
-    // 2. Nếu máy cục bộ có link Cloudflare Tunnel mới -> cập nhật ngay trên Web & đẩy lên Cloud
-    const localTunnel = String(info.tunnel_url || "").trim().replace(/\/+$/, "");
-    if (localTunnel && localTunnel.startsWith("http") && localTunnel !== state.printServerUrl) {
-      state.printServerUrl = localTunnel;
-      localStorage.setItem("sgl_print_server_url", localTunnel);
-      const txtInput = document.getElementById("txtPrintServerUrl");
-      if (txtInput) txtInput.value = localTunnel;
+      // 2. Nếu máy cục bộ có link Cloudflare Tunnel mới -> cập nhật ngay trên Web & đẩy lên Cloud
+      const localTunnel = String(info.tunnel_url || "").trim().replace(/\/+$/, "");
+      if (localTunnel && localTunnel.startsWith("http") && localTunnel !== state.printServerUrl) {
+        state.printServerUrl = localTunnel;
+        localStorage.setItem("sgl_print_server_url", localTunnel);
+        const txtInput = document.getElementById("txtPrintServerUrl");
+        if (txtInput) txtInput.value = localTunnel;
 
-      if (!info.cloud_synced) {
-        await apiPost({
-          action: "save_template",
-          template_name: "sgl_printer_config",
-          steps_json: JSON.stringify([{ action: "printer_server", params: { url: localTunnel } }]),
-          description: "Cấu hình máy in nhãn nhiệt AiYin D11S từ xa (Cloudflare Tunnel - Auto Sync)"
-        }).catch(() => {});
+        if (!info.cloud_synced) {
+          await apiPost({
+            action: "save_template",
+            template_name: "sgl_printer_config",
+            steps_json: JSON.stringify([{ action: "printer_server", params: { url: localTunnel } }]),
+            description: "Cấu hình máy in nhãn nhiệt AiYin D11S từ xa (Cloudflare Tunnel - Auto Sync)"
+          }).catch(() => {});
+        }
+        showToast(`⚡ Đã tự động cập nhật Cloudflare Tunnel mới: ${localTunnel}`);
       }
-      showToast(`⚡ Đã tự động cập nhật Cloudflare Tunnel mới: ${localTunnel}`);
+      return;
+    } catch (e) {
+      // Thử candidate tiếp theo hoặc bỏ qua im lặng nếu không có server local
     }
-  } catch (e) {
-    // Đang mở Web trên máy khác (không có web_server.py chạy local) -> bỏ qua im lặng
   }
 }
 
