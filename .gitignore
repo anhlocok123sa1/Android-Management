@@ -33,6 +33,7 @@ local.properties
 
 # Local secrets
 .sgl_local_secret
+.sgl_local_token
 .env
 anydesk_config/
 

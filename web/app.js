@@ -17,7 +17,9 @@ let state = {
   tasks: [],
   selectedMacs: new Set(),
   filteredDevices: [],
-  recentlyAddedKeys: new Set()
+  recentlyAddedKeys: new Set(),
+  iotStatusMap: {},
+  cmsIotConfigured: false
 };
 
 // Đọc tham số URL chia sẻ nhanh nếu có: ?printer=https://...
@@ -425,6 +427,9 @@ function unlockApplication() {
   document.getElementById("btnOpenSheetTop").href = state.sheetUrl;
 
   refreshAllData();
+  autoSyncLocalTunnel();
+  loadExternalSheetConfig();
+  loadCmsIotConfigStatus();
   if (syncIntervalId) clearInterval(syncIntervalId);
   syncIntervalId = setInterval(refreshAllData, 30000);
 }
@@ -1010,13 +1015,15 @@ function renderDeviceTable() {
           </span>
         </td>
         <td class="mono">
-          <div style="display:inline-flex; align-items:center; gap:6px;">
+          <div style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
             ${iotId !== "-" 
               ? `<span class="copy-chip" style="color:var(--accent-cyan); font-weight:700;" onclick="copyText('${safeIot}', 'Đã chép Mã IoT: ${safeIot}')" title="Bấm để sao chép Mã IoT">${safeIot}</span>
+                 <span role="button" tabindex="0" style="cursor:pointer; font-size:13px; opacity:0.85; padding:2px 4px; border-radius:4px;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'" onclick="checkSingleIotStatus('${safeIot}')" title="Kiểm tra trạng thái Online trên cmsiot.saigoniot.vn cho đúng Mã IoT này">🔌</span>
                  <span role="button" tabindex="0" style="cursor:pointer; font-size:13px; opacity:0.75; padding:2px 4px; border-radius:4px;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.75'" onclick="openEditIotModal('${safeMac}', '${safeAd}', '${escapeHtml(d.iot_id || '')}')" title="Bấm cây bút để sửa AnyDesk &amp; Mã IoT">✏️</span>` 
               : `<span role="button" tabindex="0" style="cursor:pointer; color:var(--text-muted); font-size:12px; border-bottom:1px dashed var(--text-muted); padding:1px 4px;" onclick="openEditIotModal('${safeMac}', '${safeAd}', '')" title="Bấm để thêm AnyDesk / Mã IoT">➕ Thêm IoT</span>`
             }
           </div>
+          ${iotId !== "-" ? renderInlineIotBadge(iotId) : ""}
         </td>
         <td><span class="badge badge-proj">${escapeHtml(proj)}</span></td>
         <td><span class="badge badge-soft">${escapeHtml(soft)}</span></td>
@@ -1108,22 +1115,32 @@ async function connectAnyDesk(adId) {
     await navigator.clipboard.writeText(state.adPass);
   } catch (e) {}
 
-  // Thử gọi Local Python Web Server (/api/open_anydesk) nếu đang chạy trên PC
-  try {
-    const resp = await fetch("/api/open_anydesk", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ anydesk_id: cleanId, password: state.adPass })
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.status === "ok") {
-        showToast(`🚀 Đang mở AnyDesk ${cleanId} (Đã tự nạp mật khẩu ${state.adPass})`);
-        return;
+  // Thử gọi Local Python Web Server (/api/open_anydesk) nếu đang chạy trên PC xưởng (hỗ trợ cả khi mở qua GitHub Pages)
+  const localEndpoints = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? ["/api/open_anydesk"]
+    : ["http://127.0.0.1:8080/api/open_anydesk"];
+
+  for (const ep of localEndpoints) {
+    try {
+      const ctrl = new AbortController();
+      const tId = setTimeout(() => ctrl.abort(), 1800);
+      const resp = await fetch(ep, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ anydesk_id: cleanId, password: state.adPass }),
+        signal: ctrl.signal
+      });
+      clearTimeout(tId);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.status === "ok") {
+          showToast(`🚀 Đang mở AnyDesk ${cleanId} (Đã tự nạp mật khẩu)`);
+          return;
+        }
       }
+    } catch (err) {
+      // Máy đang xem không chạy server local -> fallback sang URI protocol anydesk:
     }
-  } catch (err) {
-    // Nếu đang mở file trực tiếp hoặc qua GitHub Pages -> dùng URI protocol anydesk:
   }
 
   showToast(`💻 Đang mở AnyDesk ${cleanId} (Đã chép sẵn mật khẩu ${state.adPass} vào Clipboard)`);
@@ -1304,6 +1321,8 @@ function openAddDeviceModal() {
   document.getElementById("txtAddIcs").value = "";
   document.getElementById("txtAddImei").value = "";
   document.getElementById("txtAddNotes").value = "";
+  const cmsRes = document.getElementById("lblAddCmsLookupResult");
+  if (cmsRes) cmsRes.innerHTML = "";
   const hint = document.getElementById("lblAutoMacHint");
   if (hint) {
     hint.style.color = "var(--accent-cyan)";
@@ -1963,4 +1982,398 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+// ============================================================================
+// AUTO-SYNC CLOUDFLARE TUNNEL TỪ MÁY CỤC BỘ LÊN CLOUD / GITHUB PAGES
+// ============================================================================
+async function autoSyncLocalTunnel() {
+  const sess = getStoredAuthSession();
+  if (!sess) return;
+
+  const baseUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? window.location.origin
+    : "http://127.0.0.1:8080";
+
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1800);
+    const infoResp = await fetch(`${baseUrl}/api/tunnel_info`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!infoResp.ok) return;
+    const info = await infoResp.json();
+
+    // 1. Gửi token Admin cho server local lưu vào .sgl_local_token để lần sau bật .bat tự đẩy không cần mở trình duyệt
+    fetch(`${baseUrl}/api/sync_admin_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        auth_token: sess.token || "",
+        legacy_token: sess.legacyToken || "",
+        webhook_url: state.webhookUrl || DEFAULT_WEBHOOK_URL
+      })
+    }).catch(() => {});
+
+    // 2. Nếu máy cục bộ có link Cloudflare Tunnel mới -> cập nhật ngay trên Web & đẩy lên Cloud
+    const localTunnel = String(info.tunnel_url || "").trim().replace(/\/+$/, "");
+    if (localTunnel && localTunnel.startsWith("http") && localTunnel !== state.printServerUrl) {
+      state.printServerUrl = localTunnel;
+      localStorage.setItem("sgl_print_server_url", localTunnel);
+      const txtInput = document.getElementById("txtPrintServerUrl");
+      if (txtInput) txtInput.value = localTunnel;
+
+      if (!info.cloud_synced) {
+        await apiPost({
+          action: "save_template",
+          template_name: "sgl_printer_config",
+          steps_json: JSON.stringify([{ action: "printer_server", params: { url: localTunnel } }]),
+          description: "Cấu hình máy in nhãn nhiệt AiYin D11S từ xa (Cloudflare Tunnel - Auto Sync)"
+        }).catch(() => {});
+      }
+      showToast(`⚡ Đã tự động cập nhật Cloudflare Tunnel mới: ${localTunnel}`);
+    }
+  } catch (e) {
+    // Đang mở Web trên máy khác (không có web_server.py chạy local) -> bỏ qua im lặng
+  }
+}
+
+// ============================================================================
+// EXTERNAL GOOGLE SHEET AUTO-SYNC CONFIG & MANUAL PUSH
+// ============================================================================
+async function loadExternalSheetConfig() {
+  const badge = document.getElementById("lblExtSheetStatus");
+  try {
+    const res = await apiGet({ action: "get_external_sheet_config" });
+    if (res && res.status === "ok" && res.config) {
+      const c = res.config;
+      const chk = document.getElementById("chkExtSheetEnabled");
+      if (chk) chk.checked = !!c.enabled;
+      if (document.getElementById("txtExtSheetUrl")) document.getElementById("txtExtSheetUrl").value = c.sheet_url || "";
+      if (document.getElementById("txtExtSheetName")) document.getElementById("txtExtSheetName").value = c.sheet_name || "";
+      if (document.getElementById("txtExtSheetStartRow")) document.getElementById("txtExtSheetStartRow").value = c.start_row || 2;
+      if (document.getElementById("txtExtColAnydesk")) document.getElementById("txtExtColAnydesk").value = c.col_anydesk || "";
+      if (document.getElementById("txtExtColMac")) document.getElementById("txtExtColMac").value = c.col_mac || "";
+      if (document.getElementById("txtExtColIot")) document.getElementById("txtExtColIot").value = c.col_iot || "";
+      if (document.getElementById("txtExtColIcs")) document.getElementById("txtExtColIcs").value = c.col_ics || "";
+
+      if (badge) {
+        if (c.enabled && c.spreadsheet_id) {
+          badge.className = "badge badge-online";
+          badge.textContent = `🟢 Đang bật (${c.sheet_name || "Theo Dự Án"})`;
+        } else {
+          badge.className = "badge badge-slow";
+          badge.textContent = "⚪ Đang tắt";
+        }
+      }
+    }
+  } catch (err) {
+    if (badge) {
+      badge.className = "badge badge-offline";
+      badge.textContent = "⚠️ Chưa hỗ trợ trên Server";
+    }
+  }
+}
+
+async function saveExternalSheetConfig() {
+  const btn = document.getElementById("btnSaveExtSheet");
+  const enabled = !!(document.getElementById("chkExtSheetEnabled") && document.getElementById("chkExtSheetEnabled").checked);
+  const sheet_url = (document.getElementById("txtExtSheetUrl").value || "").trim();
+  const sheet_name = (document.getElementById("txtExtSheetName").value || "").trim();
+  const start_row = parseInt(document.getElementById("txtExtSheetStartRow").value || "2", 10) || 2;
+  const col_anydesk = (document.getElementById("txtExtColAnydesk").value || "").trim().toUpperCase();
+  const col_mac = (document.getElementById("txtExtColMac").value || "").trim().toUpperCase();
+  const col_iot = (document.getElementById("txtExtColIot").value || "").trim().toUpperCase();
+  const col_ics = (document.getElementById("txtExtColIcs").value || "").trim().toUpperCase();
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Đang kiểm tra quyền ghi Sheet...";
+  }
+  try {
+    const res = await apiPost({
+      action: "save_external_sheet_config",
+      enabled,
+      sheet_url,
+      sheet_name,
+      start_row,
+      col_anydesk,
+      col_mac,
+      col_iot,
+      col_ics
+    });
+    if (res && res.status === "ok") {
+      showToast(`✔ ${res.message || "Đã lưu cấu hình Google Sheet ngoài!"}`);
+      loadExternalSheetConfig();
+    } else {
+      showToast(`❌ ${(res && res.message) || "Không thể lưu cấu hình Sheet ngoài"}`, true);
+    }
+  } catch (err) {
+    showToast(`❌ Lỗi kết nối: ${err.message}`, true);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "💾 Lưu & Kiểm Tra Quyền Sheet";
+    }
+  }
+}
+
+async function pushSelectedToExternalSheet() {
+  if (!state.selectedMacs || state.selectedMacs.size === 0) {
+    showToast("⚠️ Vui lòng tick chọn [X] ít nhất 1 box để đẩy sang Google Sheet ngoài!", true);
+    return;
+  }
+  const selected = state.devices
+    .filter(d => state.selectedMacs.has(d.mac))
+    .slice(0, 50)
+    .map(d => ({
+      mac: d.mac || "",
+      anydesk_id: d.anydesk_id || "",
+      iot_id: d.iot_id || d.iot || "",
+      mac_ics: d.mac_ics || "",
+      project: d.project || ""
+    }));
+
+  if (selected.length === 0) return;
+  showToast(`⏳ Đang đồng bộ ${selected.length} box sang Google Sheet ngoài...`);
+
+  try {
+    const res = await apiPost({
+      action: "sync_device_to_external_sheet",
+      devices: selected
+    });
+    if (res && res.status === "ok") {
+      showToast(`✅ ${res.message || "Đã đồng bộ xong!"}`);
+    } else {
+      showToast(`❌ ${(res && res.message) || "Không thể đồng bộ Sheet ngoài"}`, true);
+    }
+  } catch (err) {
+    showToast(`❌ Lỗi đồng bộ Sheet ngoài: ${err.message}`, true);
+  }
+}
+
+// ============================================================================
+// SAIGONIOT CMS ON-DEMAND CHECK (CHỈ CHẠY KHI NGƯỜI DÙNG BẤM NÚT)
+// ============================================================================
+async function loadCmsIotConfigStatus() {
+  const badge = document.getElementById("lblCmsIotStatus");
+  try {
+    const res = await apiGet({ action: "get_cmsiot_config_status" });
+    if (res && res.status === "ok") {
+      state.cmsIotConfigured = !!res.configured;
+      if (badge) {
+        if (res.configured) {
+          badge.className = "badge badge-online";
+          badge.textContent = `🟢 Đã kết nối (${res.username_hint || "OK"})`;
+        } else {
+          badge.className = "badge badge-slow";
+          badge.textContent = "⚪ Chưa cấu hình";
+        }
+      }
+    }
+  } catch (err) {
+    if (badge) {
+      badge.className = "badge badge-offline";
+      badge.textContent = "⚠️ Chưa kết nối Server";
+    }
+  }
+}
+
+async function saveCmsIotConfig() {
+  const u = (document.getElementById("txtCmsIotUser").value || "").trim();
+  const p = (document.getElementById("txtCmsIotPass").value || "").trim();
+  if (!u || !p) {
+    showToast("⚠️ Vui lòng nhập đầy đủ Tài khoản và Mật khẩu SaigonIoT CMS!", true);
+    return;
+  }
+
+  const btn = document.getElementById("btnSaveCmsIot");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Đang đăng nhập cmsiot.saigoniot.vn...";
+  }
+  try {
+    const res = await apiPost({
+      action: "save_cmsiot_config",
+      username: u,
+      password: p
+    });
+    if (res && res.status === "ok") {
+      document.getElementById("txtCmsIotPass").value = "";
+      state.cmsIotConfigured = true;
+      showToast(`✔ ${res.message || "Đã lưu tài khoản SaigonIoT CMS!"}`);
+      loadCmsIotConfigStatus();
+    } else {
+      showToast(`❌ ${(res && res.message) || "Đăng nhập SaigonIoT CMS thất bại"}`, true);
+    }
+  } catch (err) {
+    showToast(`❌ Lỗi kết nối: ${err.message}`, true);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "🔐 Lưu & Kiểm Tra Kết Nối IoT";
+    }
+  }
+}
+
+function interpretCmsIotStatus(item) {
+  if (!item || item._notFound) {
+    return { cls: "badge-offline", label: "❓ Không thấy trên CMS", detail: "Không tìm thấy Mã IoT này trên cmsiot.saigoniot.vn" };
+  }
+  const st = Number(item.status);
+  let cls = "badge-offline";
+  let label = "🔴 IoT Offline";
+  if (st === 1 || st === 0 && item.android_status === 1) {
+    cls = "badge-online";
+    label = "🟢 IoT Online";
+  } else if (st === 2) {
+    cls = "badge-slow";
+    label = "🟡 IoT Cảnh báo";
+  } else if (st === 3 || st === 4) {
+    cls = "badge-offline";
+    label = "🔴 IoT Lỗi / Alarm";
+  }
+  const parts = [];
+  if (item.name) parts.push(`Trạm: ${item.name}`);
+  if (item.signal !== null && item.signal !== undefined) parts.push(`Sóng 4G: ${item.signal}`);
+  if (item.temp !== null && item.temp !== undefined) parts.push(`Nhiệt độ: ${item.temp}°C`);
+  if (item.firmware) parts.push(`FW: ${item.firmware}`);
+  if (item.last_ping) parts.push(`Ping: ${item.last_ping}`);
+  return { cls, label, detail: parts.join(" | ") };
+}
+
+function renderInlineIotBadge(iotId) {
+  const key = String(iotId || "").trim();
+  if (!key || !state.iotStatusMap || !state.iotStatusMap[key]) return "";
+  const info = state.iotStatusMap[key];
+  if (info._loading) {
+    return `<div style="margin-top:3px;"><span class="badge badge-slow" style="font-size:10.5px;">⏳ Đang kiểm tra CMS...</span></div>`;
+  }
+  const parsed = interpretCmsIotStatus(info);
+  const shortName = info.name ? ` · ${escapeHtml(info.name.slice(0, 22))}` : "";
+  return `<div style="margin-top:3px;"><span class="badge ${parsed.cls}" style="font-size:10.5px;" title="${escapeHtml(parsed.detail)}">${parsed.label}${shortName}</span></div>`;
+}
+
+async function fetchCmsIotStatusesOnDemand(idsList, forceRefresh = true) {
+  const cleanIds = Array.from(new Set(
+    (idsList || []).map(x => String(x || "").trim()).filter(x => x && x !== "-")
+  ));
+  if (cleanIds.length === 0) {
+    showToast("⚠️ Không có Mã IoT hợp lệ để kiểm tra!", true);
+    return null;
+  }
+  if (cleanIds.length > 20) {
+    showToast("⚠️ Giới hạn tối đa 20 Mã IoT mỗi lần kiểm tra để tránh lag CMS!", true);
+    return null;
+  }
+
+  cleanIds.forEach(id => {
+    state.iotStatusMap[id] = { _loading: true };
+  });
+  renderDeviceTable();
+
+  try {
+    const res = await apiGet({
+      action: "get_iot_statuses",
+      ids: cleanIds.join(","),
+      force: forceRefresh ? "true" : "false"
+    });
+    if (!res || res.status !== "ok") {
+      cleanIds.forEach(id => delete state.iotStatusMap[id]);
+      renderDeviceTable();
+      showToast(`❌ ${(res && res.message) || "Không thể kiểm tra SaigonIoT CMS"}`, true);
+      return null;
+    }
+    if (res.configured === false) {
+      cleanIds.forEach(id => delete state.iotStatusMap[id]);
+      renderDeviceTable();
+      showToast("⚠️ Chưa cấu hình tài khoản SaigonIoT CMS! Vui lòng vào tab Cấu hình & Sheet để đăng nhập.", true);
+      return null;
+    }
+    const items = res.items || {};
+    cleanIds.forEach(id => {
+      state.iotStatusMap[id] = items[id] || { _notFound: true };
+    });
+    renderDeviceTable();
+    return items;
+  } catch (err) {
+    cleanIds.forEach(id => delete state.iotStatusMap[id]);
+    renderDeviceTable();
+    showToast(`❌ Lỗi kết nối SaigonIoT CMS: ${err.message}`, true);
+    return null;
+  }
+}
+
+async function checkSingleIotStatus(iotId) {
+  const clean = String(iotId || "").trim();
+  if (!clean || clean === "-") return;
+  showToast(`🔌 Đang kiểm tra Mã IoT ${clean} trên cmsiot.saigoniot.vn...`);
+  const items = await fetchCmsIotStatusesOnDemand([clean], true);
+  if (items) {
+    const parsed = interpretCmsIotStatus(items[clean] || { _notFound: true });
+    showToast(`${parsed.label} — ${parsed.detail || clean}`);
+  }
+}
+
+async function checkSelectedIotStatuses() {
+  if (!state.selectedMacs || state.selectedMacs.size === 0) {
+    showToast("⚠️ Vui lòng tick chọn [X] các Box cần kiểm tra (tối đa 20 box), hoặc bấm biểu tượng 🔌 cạnh Mã IoT từng dòng!", true);
+    return;
+  }
+  const selectedIotIds = state.devices
+    .filter(d => state.selectedMacs.has(d.mac))
+    .map(d => String(d.iot_id || d.iot || "").trim())
+    .filter(x => x && x !== "-");
+
+  if (selectedIotIds.length === 0) {
+    showToast("⚠️ Các Box bạn chọn chưa có Mã IoT!", true);
+    return;
+  }
+  if (selectedIotIds.length > 20) {
+    showToast(`⚠️ Bạn đang chọn ${selectedIotIds.length} box. Chỉ cho phép kiểm tra tối đa 20 box/lần để tránh quá tải CMS!`, true);
+    return;
+  }
+
+  const btn = document.getElementById("btnCheckSelectedIot");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = `⏳ Đang check ${selectedIotIds.length} IoT...`;
+  }
+  try {
+    const items = await fetchCmsIotStatusesOnDemand(selectedIotIds, true);
+    if (items) {
+      const found = Object.keys(items).length;
+      showToast(`✅ Đã kiểm tra xong ${found}/${selectedIotIds.length} Mã IoT từ SaigonIoT CMS!`);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "🔌 Check IoT (Đã chọn)";
+    }
+  }
+}
+
+async function lookupSingleIotInModal() {
+  const iotVal = (document.getElementById("txtAddIot").value || "").trim();
+  const outEl = document.getElementById("lblAddCmsLookupResult");
+  if (!iotVal) {
+    showToast("⚠️ Vui lòng nhập Mã IoT trước khi tra CMS!", true);
+    return;
+  }
+  if (outEl) outEl.innerHTML = `<span style="color:var(--accent-amber);">⏳ Đang tra Mã IoT ${escapeHtml(iotVal)} trên cmsiot.saigoniot.vn...</span>`;
+
+  const items = await fetchCmsIotStatusesOnDemand([iotVal], true);
+  if (!items) {
+    if (outEl) outEl.innerHTML = `<span style="color:var(--accent-red);">❌ Không tra cứu được (kiểm tra cấu hình tài khoản CMS).</span>`;
+    return;
+  }
+  const item = items[iotVal];
+  const parsed = interpretCmsIotStatus(item || { _notFound: true });
+  if (outEl) {
+    outEl.innerHTML = `<span class="badge ${parsed.cls}" style="font-size:11px;">${parsed.label}</span> <span style="margin-left:6px;">${escapeHtml(parsed.detail)}</span>`;
+  }
+  // Tự gợi ý ghi chú nếu ô Ghi chú đang trống và CMS có tên trạm
+  const notesEl = document.getElementById("txtAddNotes");
+  if (item && item.name && notesEl && !notesEl.value.trim()) {
+    notesEl.value = item.name;
+  }
 }

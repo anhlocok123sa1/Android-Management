@@ -30,10 +30,8 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends Activity {
 
@@ -76,6 +74,7 @@ public class MainActivity extends Activity {
     private Button btnUtilSaveMk;
     private Button btnDisableWifi4G;
     private Button btnUtilDeleteSelf;
+    private Button btnSyncWifiAndDelete;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -280,6 +279,21 @@ public class MainActivity extends Activity {
 
         root.addView(utilRow);
 
+        // =====================================================================
+        // NÚT 1-CHẠM: ĐỒNG BỘ SHEET + TẮT WIFI 4G (192.168.8.1) + TỰ XÓA APP
+        // =====================================================================
+        btnSyncWifiAndDelete = new Button(this);
+        btnSyncWifiAndDelete.setText("⚡ ĐỒNG BỘ SHEET + TẮT WIFI 4G (192.168.8.1) + TỰ XÓA 00_AUTOSETUP");
+        btnSyncWifiAndDelete.setBackgroundColor(Color.parseColor("#FF6F00"));
+        btnSyncWifiAndDelete.setTextColor(Color.WHITE);
+        btnSyncWifiAndDelete.setPadding(14, 16, 14, 16);
+        LinearLayout.LayoutParams comboParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        comboParams.setMargins(5, 2, 5, 8);
+        btnSyncWifiAndDelete.setLayoutParams(comboParams);
+        btnSyncWifiAndDelete.setOnClickListener(v -> new Thread(this::runSyncDisableWifiAndSelfDelete).start());
+        root.addView(btnSyncWifiAndDelete);
+
         ScrollView scroll = new ScrollView(this);
         tvLog = new TextView(this);
         tvLog.setTextColor(Color.parseColor("#E0E0E0"));
@@ -312,10 +326,15 @@ public class MainActivity extends Activity {
      * Tự động đọc AnyDesk ID, MAC và phần mềm phát thanh đang sử dụng trên Box,
      * tìm kiếm mã AnyDesk trên các Sheet dự án của Google Sheet và đồng bộ trạng thái Online.
      */
-    private void syncOldBoxToSheet(boolean isAutoStartup) {
-        if (!isAutoStartup) {
+    private boolean syncOldBoxToSheet(boolean isAutoStartup) {
+        return syncOldBoxToSheet(isAutoStartup, !isAutoStartup);
+    }
+
+    private boolean syncOldBoxToSheet(boolean isAutoStartup, boolean manageButtons) {
+        if (manageButtons) {
             setButtonsEnabled(false);
         }
+        boolean syncedOk = false;
         try {
             String anydeskId = readAnydeskId();
             if (anydeskId != null) {
@@ -349,7 +368,18 @@ public class MainActivity extends Activity {
             if (software.isEmpty()) {
                 software = "Chưa cài App Đài";
             }
-            String macIcs = "VNPT ICS".equals(software) ? DeviceInfo.extractIcsMacIfPresent() : "";
+            String macIcs = "VNPT ICS".equals(software) ? DeviceInfo.extractIcsMacIfPresent(this) : "";
+
+            if (!isAutoStartup && "VNPT ICS".equals(software) && macIcs.isEmpty()) {
+                log("--------------------------------------------------");
+                log("⏳ Phát hiện VNPT ICS nhưng chưa có Mã ICS trong bộ nhớ -> Đang mở ICS để lấy mã từ màn hình...");
+                macIcs = extractIcsCodeFromUi("");
+                if (!macIcs.isEmpty()) {
+                    log("✔ Đã trích xuất và lưu Mã ICS: " + macIcs);
+                } else {
+                    log("⚠ Chưa đọc được Mã ICS từ màn hình (vẫn tiếp tục đồng bộ MAC & AnyDesk).");
+                }
+            }
 
             setStatusBanner(anydeskId, mac, macIcs);
 
@@ -357,6 +387,14 @@ public class MainActivity extends Activity {
             log("🔍 [ĐỒNG BỘ BOX DỰ ÁN] Đang dò tìm mã AnyDesk [" + (anydeskId.isEmpty() ? "Chưa có" : anydeskId) + "] trên Google Sheet...");
             log("   • Địa chỉ MAC thiết bị : " + mac);
             log("   • App đang sử dụng     : " + software + (macIcs.isEmpty() ? "" : (" (MAC ICS: " + macIcs + ")")));
+
+            if (DeviceInfo.isSystemClockSuspect()) {
+                log("⏳ Phát hiện đồng hồ Box bị sai ngày -> Tự động đồng bộ giờ chuẩn trước khi kết nối Sheet...");
+                DeviceInfo.TimeSyncResult ts = DeviceInfo.syncSystemDateTimeBangkok(true);
+                if (ts.timeSynced) {
+                    log("✔ Đã chỉnh lại giờ hệ thống: " + ts.formattedNow + " (GMT+7)");
+                }
+            }
 
             WebhookClient client = new WebhookClient(getWebhookUrl(findUsbAppFolder()));
             WebhookClient.SyncBoxResult res = client.syncOldBoxByAnydesk(
@@ -371,30 +409,72 @@ public class MainActivity extends Activity {
             );
 
             if (res.success) {
+                String finalIcs = !macIcs.isEmpty() ? macIcs : (res.macIcs != null ? res.macIcs : "");
+                DeviceInfo.markSynced(this, anydeskId, res.software, finalIcs);
+
                 String matchNote = res.matchedByAnydesk
                         ? "✅ ĐÃ TÌM THẤY MÃ ANYDESK TRÊN DỰ ÁN: " + res.project
                         : "ℹ Mã AnyDesk chưa có sẵn trong Sheet dự án -> Đã thêm vào: " + res.project;
                 log(matchNote);
-                log("✔ Đã đồng bộ lên Google Sheet: Dự án [" + res.project + "] | App [" + res.software + "] | Trạng thái [ONLINE]");
+                log("✔ Đã đồng bộ lên Google Sheet: Dự án [" + res.project + "] | App [" + res.software + "]"
+                        + (finalIcs.isEmpty() ? "" : (" | Mã ICS [" + finalIcs + "]"))
+                        + " | Trạng thái [ONLINE]");
                 final String finalAd = anydeskId;
                 final String finalMac = mac;
                 final String finalProj = res.project;
                 final String finalSoft = res.software;
+                final String finalIcsBanner = finalIcs;
                 mainHandler.post(() -> tvAnydeskId.setText(
                         "ANYDESK: " + (finalAd.isEmpty() ? "Chưa có" : finalAd) +
                         "  |  MAC: " + finalMac +
+                        (finalIcsBanner.isEmpty() ? "" : ("  |  ICS: " + finalIcsBanner)) +
                         "  |  DỰ ÁN: " + finalProj + " (" + finalSoft + " - ONLINE)"
                 ));
+                syncedOk = true;
             } else {
-                log("⚠ Chưa thể kết nối Google Sheet: " + res.message);
+                log("⚠ Chưa thể đồng bộ Google Sheet: " + res.message);
             }
         } catch (Exception e) {
             log("⚠ Lỗi khi đồng bộ Box lên Sheet: " + e.getMessage());
         } finally {
-            if (!isAutoStartup) {
+            if (manageButtons) {
                 setButtonsEnabled(true);
             }
         }
+        return syncedOk;
+    }
+
+    /**
+     * Quy trình 1-chạm: Đồng bộ Box lên Sheet -> Tắt Wi-Fi 4G (192.168.8.1) -> Tự xóa 00_AutoSetup.
+     * Nếu bước Đồng bộ hoặc bước Tắt Wi-Fi 4G thất bại thì DỪNG LẠI và KHÔNG xóa app để kỹ thuật viên kiểm tra.
+     */
+    private void runSyncDisableWifiAndSelfDelete() {
+        setButtonsEnabled(false);
+        log("==================================================");
+        log("⚡ [1-CHẠM] BẮT ĐẦU: ĐỒNG BỘ SHEET -> TẮT WIFI 4G -> TỰ XÓA 00_AUTOSETUP");
+        log(">>> [GIAI ĐOẠN 1/3] Đang đồng bộ AnyDesk + MAC + App lên Google Sheet...");
+
+        boolean synced = syncOldBoxToSheet(false, false);
+        if (!synced) {
+            log("❌ [DỪNG] Đồng bộ Google Sheet chưa thành công -> KHÔNG tắt Wi-Fi và KHÔNG xóa 00_AutoSetup!");
+            setButtonsEnabled(true);
+            return;
+        }
+
+        log("✔ [GIAI ĐOẠN 1/3] Đồng bộ Sheet THÀNH CÔNG! Chuyển sang GIAI ĐOẠN 2/3: Tắt Wi-Fi 4G (192.168.8.1)...");
+        runDisableSmartWifi4G(
+                () -> {
+                    log("✔ [GIAI ĐOẠN 2/3] Đã tắt Wi-Fi 4G thành công! Chờ 2.5 giây trước khi tự xóa 00_AutoSetup...");
+                    mainHandler.postDelayed(() -> new Thread(() -> {
+                        log(">>> [GIAI ĐOẠN 3/3] Đang tự xóa 00_AutoSetup...");
+                        uninstallSelfApp();
+                    }).start(), 2500L);
+                },
+                () -> {
+                    log("❌ [DỪNG] Tắt Wi-Fi 4G chưa hoàn tất -> GIỮ LẠI 00_AutoSetup để bạn kiểm tra!");
+                    setButtonsEnabled(true);
+                }
+        );
     }
 
     // =========================================================================
@@ -602,18 +682,22 @@ public class MainActivity extends Activity {
         setButtonsEnabled(false);
         log("==================================================");
         log(">>> GIAI ĐOẠN 2: CHỐT DỰ ÁN [VNPT ICS] -> XUẤT SHEET '" + SHEET_ICS + "' <<<");
+        if (DeviceInfo.isSystemClockSuspect()) {
+            log("⏳ Đồng hồ Box đang sai ngày -> Tự động đồng bộ giờ chuẩn trước khi đăng ký ICS...");
+            DeviceInfo.syncSystemDateTimeBangkok(true);
+        }
 
         String usbDir = findUsbAppFolder();
 
         // 1. Gỡ bản Radio 3.6 / 1.66 trước khi cài ICS
-        log("[1/5] Đang gỡ ứng dụng RadioStation cũ...");
+        log("[1/6] Đang gỡ ứng dụng RadioStation cũ...");
         uninstallAppSilently(usbDir, APK_RADIO_36, "radio|audio|station|streamer");
         uninstallAppSilently(usbDir, APK_RADIO_166, "radio|audio|station|streamer");
 
         // 2. Cài đặt ứng dụng ICS (ics-android-box (2.0.0).apk)
         String checkIcsInstalled = runRootCommand("pm list packages " + ICS_PACKAGE_NAME + " 2>/dev/null");
         if (checkIcsInstalled.isEmpty()) {
-            log("[2/5] Đang cài đặt ứng dụng ICS (" + APK_ICS + ")...");
+            log("[2/6] Đang cài đặt ứng dụng ICS (" + APK_ICS + ")...");
             boolean installed = installApkFromUsbOrBackup(APK_ICS, usbDir);
             bringAutoSetupToFront();
             if (!installed) {
@@ -622,27 +706,46 @@ public class MainActivity extends Activity {
                 return;
             }
         } else {
-            log("[2/5] Ứng dụng ICS (" + ICS_PACKAGE_NAME + ") đã có sẵn trên mạch.");
+            log("[2/6] Ứng dụng ICS (" + ICS_PACKAGE_NAME + ") đã có sẵn trên mạch.");
         }
 
         // 3. Mở ICS 5 giây để trích xuất chính xác Mã ICS từ giao diện (idx=4, android.view.View)
-        log("[3/5] Đang mở ứng dụng ICS để lấy Mã ICS thiết bị...");
-        String icsCode = extractIcsCodeFromUi(usbDir);
+        log("[3/6] Đang mở ứng dụng ICS để lấy Mã ICS thiết bị...");
+        String icsCode = extractIcsCodeFromUi(usbDir, false);
         if (icsCode.isEmpty()) {
+            icsCode = DeviceInfo.extractIcsMacIfPresent(this);
+        }
+        if (icsCode.isEmpty()) {
+            bringAutoSetupToFront();
             log("❌ Không đọc được Mã ICS trên màn hình!");
             setButtonsEnabled(true);
             return;
         }
         log("✔ Đã lấy được Mã ICS chuẩn: " + icsCode);
 
-        // 4. Xuất [AnyDesk | Mã ICS | MAC] ra Sheet "ICS"
-        log("[4/5] Đang xuất [AnyDesk | Mã ICS | MAC] ra Sheet '" + SHEET_ICS + "'...");
+        // 4. Tự động bấm đăng ký thiết bị VNPT ICS (-> | OK Bước 1 Token | OK Bước 2 Topic)
+        log("[4/6] Đang tự động đăng ký thiết bị trên app VNPT ICS...");
+        String icsPkg = resolvePackageName(usbDir, APK_ICS, "ics_content_management|ics");
+        if (icsPkg.isEmpty()) {
+            icsPkg = ICS_PACKAGE_NAME;
+        }
+        IcsUiAutomator.RegistrationResult regRes = IcsUiAutomator.registerDevice(
+                this, icsPkg, "vnpt.smartcomm.radio", this::log);
+        bringAutoSetupToFront();
+        if (regRes.success) {
+            log("✔ " + regRes.message);
+        } else {
+            log("⚠ Đăng ký thiết bị VNPT ICS chưa hoàn tất: " + regRes.message);
+        }
+
+        // 5. Xuất [AnyDesk | Mã ICS | MAC] ra Sheet "ICS"
+        log("[5/6] Đang xuất [AnyDesk | Mã ICS | MAC] ra Sheet '" + SHEET_ICS + "'...");
         String anydeskId = ensureAnydeskIdReady();
         String mac = readFormattedMacAddress();
         setStatusBanner(anydeskId, mac, icsCode);
         sendToProjectSheet(SHEET_ICS, anydeskId, mac, icsCode, usbDir);
 
-        log("[5/5] Hoàn tất chốt dự án VNPT ICS!");
+        log("[6/6] Hoàn tất chốt dự án VNPT ICS!");
         if (autoRemoveSelf) {
             uninstallSelfApp();
         } else {
@@ -687,6 +790,9 @@ public class MainActivity extends Activity {
         String pkg = resolvePackageName(usbDir, apkFileName, fallbackRegex);
         if (!pkg.isEmpty()) {
             runRootCommand("am force-stop " + pkg + " ; pm uninstall " + pkg + " >/dev/null 2>&1");
+            if (APK_ICS.equals(apkFileName) || pkg.contains("ics_content_management") || pkg.contains("vnpt.smartcomm.radio")) {
+                DeviceInfo.clearCachedIcsCode(this);
+            }
             log("   -> Đã gỡ ứng dụng cũ: " + pkg);
         }
     }
@@ -695,12 +801,17 @@ public class MainActivity extends Activity {
     // HÀM DÙNG CHUNG: GỬI DỮ LIỆU LÊN ĐÚNG SHEET CỦA TỪNG DỰ ÁN
     // =========================================================================
     private void sendToProjectSheet(String sheetName, String anydeskId, String mac, String icsCode, String usbDir) {
+        if (mac == null || mac.isEmpty() || "UNKNOWN".equals(mac)) {
+            mac = readFormattedMacAddress();
+        }
+        String cleanAd = anydeskId != null ? anydeskId.replaceAll("[^0-9]", "").trim() : "";
+
         // 1. Lưu file CSV dự phòng theo tên dự án trên USB (hoặc /sdcard/Download)
         String backupDir = usbDir.isEmpty() ? "/sdcard/Download" : usbDir;
         String safeFileName = "Danh_sach_" + sheetName.replace(" ", "_") + ".csv";
         String csvLine = SHEET_ICS.equals(sheetName)
-                ? (anydeskId + "," + icsCode + "," + mac)
-                : (anydeskId + "," + mac);
+                ? (cleanAd + "," + icsCode + "," + mac)
+                : (cleanAd + "," + mac);
         String csvHeader = SHEET_ICS.equals(sheetName) ? "AnyDesk_ID,Ma_ICS,MAC" : "AnyDesk_ID,MAC";
 
         runRootCommand(
@@ -711,51 +822,53 @@ public class MainActivity extends Activity {
         );
         log("✔ Đã lưu bản dự phòng tại: " + backupDir + "/" + safeFileName);
 
-        // 2. Bắn dữ liệu lên Google Sheet vào đúng tab sheetName
+        // 2. Bắn dữ liệu lên Google Sheet bằng OkHttp (timeout 60s + retry tự động + kiểm tra JSON)
         String webhookUrl = getWebhookUrl(usbDir);
         if (webhookUrl.isEmpty() || webhookUrl.contains("DAN_LINK_GOOGLE_SCRIPT")) {
             log("⚠ Bạn chưa dán link Google Apps Script (hoặc file sheet_url.txt trên USB).");
             return;
         }
+        if (mac == null || mac.isEmpty() || "UNKNOWN".equals(mac)) {
+            log("⚠ Không đọc được địa chỉ MAC hợp lệ của Box nên chưa thể gửi lên Google Sheet.");
+            return;
+        }
 
-        try {
-            JSONObject payload = new JSONObject();
-            payload.put("action", "register_device");
-            payload.put("anydesk_id", anydeskId);
-            payload.put("mac", mac);
-            payload.put("project", "Kho thiết bị");
-            payload.put("software", SHEET_ANDROID_MOI.equals(sheetName) ? "Radio 3.6 (Test)" : sheetName);
-            payload.put("sheet_name", sheetName);
-            payload.put("sheet_type", SHEET_ICS.equals(sheetName) ? "ICS" : "MAIN");
-            if (icsCode != null && !icsCode.isEmpty()) {
-                payload.put("mac_ics", icsCode);
-                payload.put("ics_code", icsCode);
-            }
+        String software;
+        if (SHEET_ANDROID_MOI.equals(sheetName)) {
+            software = "Radio 3.6 (Test)";
+        } else if (SHEET_ICS.equals(sheetName)) {
+            software = "VNPT ICS";
+        } else {
+            software = sheetName;
+        }
 
-            HttpURLConnection conn = (HttpURLConnection) new URL(webhookUrl).openConnection();
-            conn.setInstanceFollowRedirects(true);
-            conn.setRequestMethod("POST");
-            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(10000);
-            conn.setDoOutput(true);
+        WebhookClient client = new WebhookClient(webhookUrl);
+        WebhookClient.SyncBoxResult res = client.registerProjectDevice(
+                mac,
+                cleanAd,
+                sheetName,
+                software,
+                icsCode,
+                DeviceInfo.getAppVersion(this),
+                DeviceInfo.getStorageMb()
+        );
 
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(payload.toString().getBytes(StandardCharsets.UTF_8));
-            }
+        if (res.success) {
+            String finalIcs = (icsCode != null && !icsCode.isEmpty())
+                    ? icsCode
+                    : (res.macIcs != null ? res.macIcs : "");
+            DeviceInfo.markSynced(this, cleanAd, res.software, finalIcs);
 
-            int responseCode = conn.getResponseCode();
-            if (responseCode == 200 || responseCode == 302) {
-                if (SHEET_ICS.equals(sheetName)) {
-                    log("🎉 ĐÃ GHI VÀO SHEET [" + sheetName + "] THÀNH CÔNG: AnyDesk=" + anydeskId + " | ICS=" + icsCode + " | MAC=" + mac);
-                } else {
-                    log("🎉 ĐÃ GHI VÀO SHEET [" + sheetName + "] THÀNH CÔNG: AnyDesk=" + anydeskId + " | MAC=" + mac);
-                }
+            if (SHEET_ICS.equals(sheetName) || !finalIcs.isEmpty()) {
+                log("🎉 ĐÃ GHI LÊN GOOGLE SHEET THÀNH CÔNG [" + res.project + "]: AnyDesk=" + cleanAd + " | ICS=" + finalIcs + " | MAC=" + mac);
             } else {
-                log("⚠ Google Sheet phản hồi mã HTTP: " + responseCode);
+                log("🎉 ĐÃ GHI LÊN GOOGLE SHEET THÀNH CÔNG [" + res.project + "]: AnyDesk=" + cleanAd + " | MAC=" + mac);
             }
-        } catch (Exception e) {
-            log("⚠ Lỗi kết nối mạng khi gửi lên Sheet [" + sheetName + "]: " + e.getMessage());
+        } else {
+            log("⚠ Không thể gửi lên Google Sheet [" + sheetName + "]: " + res.message);
+            if (icsCode != null && !icsCode.isEmpty()) {
+                log("ℹ Mã ICS (" + icsCode + ") đã được lưu đệm trên máy và sẽ tự đồng bộ lại khi có mạng hoặc khi bấm [ĐỒNG BỘ BOX CŨ].");
+            }
         }
     }
 
@@ -774,6 +887,10 @@ public class MainActivity extends Activity {
     // TRÍCH XUẤT CHÍNH XÁC MÃ ICS TỪ GIAO DIỆN com.app.ics_content_management
     // =========================================================================
     private String extractIcsCodeFromUi(String usbDir) {
+        return extractIcsCodeFromUi(usbDir, true);
+    }
+
+    private String extractIcsCodeFromUi(String usbDir, boolean bringToFrontAfter) {
         String icsPkg = resolvePackageName(usbDir, APK_ICS, "ics_content_management|ics");
         if (icsPkg.isEmpty()) {
             icsPkg = ICS_PACKAGE_NAME;
@@ -781,35 +898,20 @@ public class MainActivity extends Activity {
 
         String installed = runRootCommand("pm list packages " + icsPkg + " 2>/dev/null");
         if (installed.isEmpty()) {
-            log("❌ Ứng dụng ICS (" + icsPkg + ") chưa được cài đặt trên thiết bị!");
-            return "";
-        }
-
-        log("⏳ Đang mở ứng dụng ICS (" + icsPkg + ") và đợi 5 giây để đọc mã ICS...");
-        runRootCommand("monkey -p " + icsPkg + " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1");
-
-        String icsCode = "";
-        for (int attempt = 1; attempt <= 2; attempt++) {
-            try { Thread.sleep(attempt == 1 ? 5000 : 2500); } catch (InterruptedException ignored) {}
-
-            String dumpAndParseCmd =
-                    "rm -f /data/local/tmp/ics_ui.xml /data/local/tmp/ics_nodes.txt ; " +
-                            "uiautomator dump /data/local/tmp/ics_ui.xml >/dev/null 2>&1 ; " +
-                            "if [ -f /data/local/tmp/ics_ui.xml ]; then " +
-                            "  sed 's/></>\\n</g' /data/local/tmp/ics_ui.xml > /data/local/tmp/ics_nodes.txt ; " +
-                            "  CODE=$(grep 'class=\"android.view.View\"' /data/local/tmp/ics_nodes.txt | grep 'content-desc=\"\"' | grep -oE 'text=\"[^\"]+\"' | grep -v 'text=\"\"' | head -n 1 | cut -d'\"' -f2) ; " +
-                            "  if [ -z \"$CODE\" ]; then " +
-                            "    CODE=$(grep -oE 'text=\"[0-9a-fA-F]{12,24}\"' /data/local/tmp/ics_nodes.txt | head -n 1 | cut -d'\"' -f2) ; " +
-                            "  fi ; " +
-                            "  echo \"$CODE\" ; " +
-                            "fi";
-            icsCode = runRootCommand(dumpAndParseCmd).trim();
-            if (!icsCode.isEmpty()) {
-                break;
+            String fallbackInstalled = runRootCommand("pm list packages vnpt.smartcomm.radio 2>/dev/null");
+            if (!fallbackInstalled.isEmpty()) {
+                icsPkg = "vnpt.smartcomm.radio";
+            } else {
+                log("❌ Ứng dụng ICS (" + icsPkg + ") chưa được cài đặt trên thiết bị!");
+                return "";
             }
         }
 
-        bringAutoSetupToFront();
+        log("⏳ Đang mở ứng dụng ICS (" + icsPkg + ") và đợi 5 giây để đọc mã ICS...");
+        String icsCode = DeviceInfo.extractIcsCodeFromUi(this, icsPkg, ICS_PACKAGE_NAME);
+        if (bringToFrontAfter) {
+            bringAutoSetupToFront();
+        }
         return icsCode;
     }
 
@@ -834,42 +936,12 @@ public class MainActivity extends Activity {
             log(">>> CÀI NGÀY GIỜ SANG GMT+07:00 (BANGKOK) <<<");
         }
 
-        String tzCmd =
-                "settings put global auto_time_zone 0 ; " +
-                        "settings put global auto_time 1 ; " +
-                        "settings put system time_12_24 24 ; " +
-                        "setprop persist.sys.timezone Asia/Bangkok ; " +
-                        "cmd alarm set-timezone Asia/Bangkok 2>/dev/null ; " +
-                        "service call alarm 3 s16 Asia/Bangkok 2>/dev/null ; " +
-                        "am broadcast -a android.intent.action.TIMEZONE_CHANGED --es time-zone Asia/Bangkok >/dev/null 2>&1 ; " +
-                        "getprop persist.sys.timezone";
-        String currentTz = runRootCommand(tzCmd);
-        log("✔ Đã đặt múi giờ hệ thống: " + currentTz + " (GMT+07:00 Bangkok)");
-
-        try {
-            HttpURLConnection conn = (HttpURLConnection) new URL("http://clients3.google.com/generate_204").openConnection();
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
-            conn.connect();
-            long serverTimeMillis = conn.getDate();
-            conn.disconnect();
-
-            if (serverTimeMillis > 0) {
-                long epochSec = serverTimeMillis / 1000;
-                runRootCommand(
-                        "cmd alarm set-time " + serverTimeMillis + " 2>/dev/null ; " +
-                                "date @" + epochSec + " >/dev/null 2>&1 ; " +
-                                "toybox date @" + epochSec + " >/dev/null 2>&1 ; " +
-                                "hwclock -w 2>/dev/null || true"
-                );
-                log("✔ Đã đồng bộ ngày giờ chuẩn qua Internet!");
-            }
-        } catch (Exception e) {
-            runRootCommand("settings put global auto_time 0 ; settings put global auto_time 1");
+        DeviceInfo.TimeSyncResult ts = DeviceInfo.syncSystemDateTimeBangkok(true);
+        log("✔ Đã đặt múi giờ hệ thống: " + ts.timezone + " (GMT+07:00 Bangkok)");
+        if (ts.timeSynced) {
+            log("✔ Đã đồng bộ ngày giờ chuẩn qua Internet!");
         }
-
-        String nowStr = runRootCommand("TZ=Asia/Bangkok date '+%d/%m/%Y - %H:%M:%S'");
-        log("🕒 Thời gian hiện tại: " + nowStr + " (GMT+7)");
+        log("🕒 Thời gian hiện tại: " + ts.formattedNow + " (GMT+7)");
 
         if (isStandaloneMenu) {
             setButtonsEnabled(true);
@@ -949,6 +1021,9 @@ public class MainActivity extends Activity {
 
         String res = runRootCommand("am force-stop " + pkg + " ; pm uninstall " + pkg + " 2>&1");
         if (res.contains("Success")) {
+            if (APK_ICS.equals(apkFileName) || pkg.contains("ics_content_management") || pkg.contains("vnpt.smartcomm.radio")) {
+                DeviceInfo.clearCachedIcsCode(this);
+            }
             log("✔ ĐÃ GỠ CÀI ĐẶT " + appLabel.toUpperCase() + " (" + pkg + ") THÀNH CÔNG!");
         } else {
             log("❌ Kết quả: " + res);
@@ -979,6 +1054,7 @@ public class MainActivity extends Activity {
             btnUtilSaveMk.setEnabled(enabled);
             if (btnDisableWifi4G != null) btnDisableWifi4G.setEnabled(enabled);
             btnUtilDeleteSelf.setEnabled(enabled);
+            if (btnSyncWifiAndDelete != null) btnSyncWifiAndDelete.setEnabled(enabled);
         });
     }
 
@@ -986,6 +1062,10 @@ public class MainActivity extends Activity {
     // QUY TRÌNH TỰ ĐỘNG TẮT WIFI 2.4G TRÊN MODULE 4G (192.168.8.1)
     // =========================================================================
     private void runDisableSmartWifi4G() {
+        runDisableSmartWifi4G(null, null);
+    }
+
+    private void runDisableSmartWifi4G(Runnable onSuccess, Runnable onFailure) {
         setButtonsEnabled(false);
         log("==================================================");
         log(">>> BẮT ĐẦU QUY TRÌNH TỰ ĐỘNG TẮT WIFI MODULE 4G (192.168.8.1) <<<");
@@ -1011,16 +1091,20 @@ public class MainActivity extends Activity {
 
         if (!reachable) {
             log("❌ Không kết nối được tới mạch 4G (192.168.8.1)! Hãy kiểm tra module 4G đã cắm vào mạch chưa.");
-            setButtonsEnabled(true);
+            if (onFailure != null) {
+                onFailure.run();
+            } else {
+                setButtonsEnabled(true);
+            }
             return;
         }
 
         log("✔ Đã kết nối tới Smart Wifi System (192.168.8.1). Đang khởi chạy trình tự động tắt Wi-Fi...");
-        mainHandler.post(this::showSmartWifiAutomationDialog);
+        mainHandler.post(() -> showSmartWifiAutomationDialog(onSuccess, onFailure));
     }
 
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
-    private void showSmartWifiAutomationDialog() {
+    private void showSmartWifiAutomationDialog(Runnable onSuccess, Runnable onFailure) {
         LinearLayout container = new LinearLayout(this);
         container.setOrientation(LinearLayout.VERTICAL);
         container.setPadding(16, 12, 16, 12);
@@ -1084,7 +1168,11 @@ public class MainActivity extends Activity {
                         webView.destroy();
                     } catch (Exception ignored) {}
                     log("⚠ Đã đóng cửa sổ tự động tắt Wi-Fi 4G.");
-                    setButtonsEnabled(true);
+                    if (onFailure != null) {
+                        onFailure.run();
+                    } else {
+                        setButtonsEnabled(true);
+                    }
                 })
                 .create();
 
@@ -1108,12 +1196,16 @@ public class MainActivity extends Activity {
                         if (dialog.isShowing()) dialog.dismiss();
                         webView.destroy();
                     } catch (Exception ignored) {}
-                    setButtonsEnabled(true);
+                    if (onFailure != null) {
+                        onFailure.run();
+                    } else {
+                        setButtonsEnabled(true);
+                    }
                     return;
                 }
 
                 if (saveClickedTimeMs[0] > 0L && (System.currentTimeMillis() - saveClickedTimeMs[0] >= 3200L)) {
-                    completeSuccess(dialog, webView, finished);
+                    completeSuccess(dialog, webView, finished, onSuccess);
                     return;
                 }
 
@@ -1151,7 +1243,7 @@ public class MainActivity extends Activity {
                     }
 
                     if (SmartWifiHelper.isTerminalSuccess(status)) {
-                        completeSuccess(dialog, webView, finished);
+                        completeSuccess(dialog, webView, finished, onSuccess);
                     } else if (!finished[0]) {
                         mainHandler.postDelayed(this, 600);
                     }
@@ -1162,7 +1254,7 @@ public class MainActivity extends Activity {
         mainHandler.postDelayed(pollTask, 800);
     }
 
-    private void completeSuccess(AlertDialog dialog, WebView webView, boolean[] finished) {
+    private void completeSuccess(AlertDialog dialog, WebView webView, boolean[] finished, Runnable onSuccess) {
         if (finished[0]) return;
         finished[0] = true;
         log("🎉 ĐÃ TẮT WIFI 2.4G TRÊN MODULE 4G (192.168.8.1) THÀNH CÔNG!");
@@ -1173,7 +1265,11 @@ public class MainActivity extends Activity {
                 webView.stopLoading();
                 webView.destroy();
             } catch (Exception ignored) {}
-            setButtonsEnabled(true);
+            if (onSuccess != null) {
+                onSuccess.run();
+            } else {
+                setButtonsEnabled(true);
+            }
         }, 900);
     }
 
