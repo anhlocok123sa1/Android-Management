@@ -235,6 +235,12 @@
           <span id="lblSelectedCount" class="mono" style="color:var(--accent-green); font-weight:700; margin-right:4px;">
             Đã chọn: 0
           </span>
+          <button class="btn btn-cyan" id="btnCheckSelectedIot" onclick="checkSelectedIotStatuses()" title="Chỉ kiểm tra trạng thái CMS IoT cho các Box đã tick chọn (tối đa 20 box/lần, không quét toàn bộ)">
+            🔌 Check IoT (Đã chọn)
+          </button>
+          <button class="btn btn-outline" onclick="pushSelectedToExternalSheet()" title="Đẩy thông tin AnyDesk / MAC / IoT / ICS của các Box đã chọn sang Google Sheet ngoài">
+            📊 Đẩy Sheet Ngoài
+          </button>
           <button class="btn btn-amber" onclick="openAssignProjectModal()">
             📁 Gán Dự Án
           </button>
@@ -472,6 +478,89 @@
           <button class="btn btn-cyan" onclick="resetDefaultSettings()">🔄 Khôi Phục Mặc Định</button>
           <button class="btn btn-amber" onclick="syncSheetsOnCloud()">🔀 Đồng Bộ Tách Sheet Ngay</button>
         </div>
+
+        <hr style="border:none; border-top:1px solid var(--border-subtle); margin:24px 0;" />
+
+        <!-- CẤU HÌNH ĐỒNG BỘ GOOGLE SHEET NGOÀI -->
+        <div class="panel-header" style="margin-bottom:12px;">
+          <div class="panel-title">📊 ĐỒNG BỘ TỰ ĐỘNG SANG GOOGLE SHEET NGOÀI</div>
+          <span id="lblExtSheetStatus" class="badge badge-slow">Chưa cấu hình</span>
+        </div>
+        <p style="color:var(--text-secondary); font-size:12px; margin-bottom:14px;">
+          Tự động điền <strong>AnyDesk, MAC, Mã IoT, Mã ICS</strong> sang file Google Sheet dự án của bạn mỗi khi thêm Box hoặc Box gửi MAC thật lên hệ thống. (Nhớ chia sẻ quyền <strong>Người chỉnh sửa / Editor</strong> file đích cho tài khoản chạy Apps Script.)
+        </p>
+
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="checkbox" id="chkExtSheetEnabled" />
+            <span>Bật tự động điền sang Google Sheet ngoài</span>
+          </label>
+        </div>
+
+        <div class="form-row">
+          <label>Link hoặc ID Google Sheet đích:</label>
+          <input type="text" id="txtExtSheetUrl" class="input-control mono" placeholder="https://docs.google.com/spreadsheets/d/..." />
+        </div>
+
+        <div style="display:grid; grid-template-columns:2fr 1fr; gap:10px;">
+          <div class="form-row">
+            <label>Tên Sheet (Tab) đích (để trống = tự khớp tên Dự Án):</label>
+            <input type="text" id="txtExtSheetName" class="input-control" placeholder="VD: New" />
+          </div>
+          <div class="form-row">
+            <label>Dòng dữ liệu bắt đầu:</label>
+            <input type="number" id="txtExtSheetStartRow" class="input-control mono" value="2" min="1" />
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px;">
+          <div class="form-row">
+            <label>Cột AnyDesk:</label>
+            <input type="text" id="txtExtColAnydesk" class="input-control mono" placeholder="VD: C" maxlength="3" />
+          </div>
+          <div class="form-row">
+            <label>Cột MAC:</label>
+            <input type="text" id="txtExtColMac" class="input-control mono" placeholder="VD: D" maxlength="3" />
+          </div>
+          <div class="form-row">
+            <label>Cột Mã IoT:</label>
+            <input type="text" id="txtExtColIot" class="input-control mono" placeholder="VD: B" maxlength="3" />
+          </div>
+          <div class="form-row">
+            <label>Cột Mã ICS (tùy chọn):</label>
+            <input type="text" id="txtExtColIcs" class="input-control mono" placeholder="VD: E" maxlength="3" />
+          </div>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:12px;">
+          <button class="btn btn-success" id="btnSaveExtSheet" onclick="saveExternalSheetConfig()">💾 Lưu &amp; Kiểm Tra Quyền Sheet</button>
+        </div>
+
+        <hr style="border:none; border-top:1px solid var(--border-subtle); margin:24px 0;" />
+
+        <!-- CẤU HÌNH SAIGONIOT CMS -->
+        <div class="panel-header" style="margin-bottom:12px;">
+          <div class="panel-title">🔌 KẾT NỐI SAIGONIOT CMS (cmsiot.saigoniot.vn)</div>
+          <span id="lblCmsIotStatus" class="badge badge-slow">Chưa cấu hình</span>
+        </div>
+        <p style="color:var(--text-secondary); font-size:12px; margin-bottom:14px;">
+          Tài khoản được lưu an toàn trong <strong>Script Properties</strong> trên Google Apps Script. Hệ thống <strong>KHÔNG tự động quét hàng loạt</strong> — chỉ kiểm tra khi bạn chủ động bấm nút <strong>🔌</strong> (từng dòng hoặc các box đã chọn, tối đa 20 box/lần).
+        </p>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div class="form-row">
+            <label>Tài khoản SaigonIoT CMS:</label>
+            <input type="text" id="txtCmsIotUser" class="input-control mono" placeholder="Nhập tài khoản CMS IoT" autocomplete="off" />
+          </div>
+          <div class="form-row">
+            <label>Mật khẩu SaigonIoT CMS:</label>
+            <input type="password" id="txtCmsIotPass" class="input-control mono" placeholder="Nhập mật khẩu CMS IoT" autocomplete="new-password" />
+          </div>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:12px;">
+          <button class="btn btn-success" id="btnSaveCmsIot" onclick="saveCmsIotConfig()">🔐 Lưu &amp; Kiểm Tra Kết Nối IoT</button>
+        </div>
       </div>
     </section>
 
@@ -523,7 +612,13 @@
         </div>
         <div class="form-row">
           <label>Mã IoT (Mạch IoT):</label>
-          <input type="text" id="txtAddIot" class="input-control mono" placeholder="VD: 11738 / Mã IoT" />
+          <div style="display:flex; gap:6px;">
+            <input type="text" id="txtAddIot" class="input-control mono" placeholder="VD: 11738 / Mã IoT" style="flex:1;" />
+            <button type="button" class="btn btn-cyan btn-sm" id="btnAddLookupCms" onclick="lookupSingleIotInModal()" title="Tra cứu nhanh trạng thái từ cmsiot.saigoniot.vn">
+              🔍 Tra CMS
+            </button>
+          </div>
+          <div id="lblAddCmsLookupResult" style="font-size:11.5px; color:var(--text-secondary); margin-top:4px;"></div>
         </div>
       </div>
       <div class="form-row">
