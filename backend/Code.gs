@@ -3092,17 +3092,18 @@ function trySyncDeviceToExternalSheet(deviceObj, forceManual) {
   var targetRow = matchedRow > 0 ? matchedRow : (firstEmptyRow > 0 ? firstEmptyRow : (lastRow + 1));
 
   if (cAd > 0 && cleanAd) {
-    sheet.getRange(targetRow, cAd).setNumberFormat("@").setValue(String(cleanAd));
+    sheet.getRange(targetRow, cAd).setValue(String(cleanAd));
   }
   if (cMac > 0 && realMac) {
-    sheet.getRange(targetRow, cMac).setNumberFormat("@").setValue(String(realMac));
+    sheet.getRange(targetRow, cMac).setValue(String(realMac));
   }
   if (cIot > 0 && cleanIot) {
-    sheet.getRange(targetRow, cIot).setNumberFormat("@").setValue(String(cleanIot));
+    sheet.getRange(targetRow, cIot).setValue(String(cleanIot));
   }
   if (cIcs > 0 && cleanIcs) {
-    sheet.getRange(targetRow, cIcs).setNumberFormat("@").setValue(String(cleanIcs));
+    sheet.getRange(targetRow, cIcs).setValue(String(cleanIcs));
   }
+  SpreadsheetApp.flush();
 
   return {
     synced: true,
