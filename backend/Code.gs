@@ -403,6 +403,7 @@ function upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, dataObj) {
   var projColIdx = headers.indexOf("project");
   var softColIdx = headers.indexOf("software");
   var icsColIdx = headers.indexOf("mac_ics");
+  var iotColIdx = headers.indexOf("iot_id");
 
   var cleanMac = String(mac || "").trim().replace(/[:\-]/g, "").toUpperCase();
   var cleanAd = normalizeAnydeskId(anydeskId);
@@ -557,6 +558,8 @@ function upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, dataObj) {
       isNew: false,
       matchedByAnydesk: matchedByAnydesk,
       mac: String(updatedRow[macColIdx] || cleanMac),
+      anydesk_id: adColIdx !== -1 ? normalizeAnydeskId(updatedRow[adColIdx] || cleanAd) : cleanAd,
+      iot_id: iotColIdx !== -1 ? String(updatedRow[iotColIdx] || "").trim() : String(dataObj.iot_id || "").trim(),
       project: String(updatedRow[projColIdx] || "Kho thiết bị"),
       software: String(updatedRow[softColIdx] || ""),
       mac_ics: icsColIdx !== -1 ? String(updatedRow[icsColIdx] || "") : "",
@@ -583,6 +586,8 @@ function upsertDeviceByMacOrAnydesk(devicesSheet, mac, anydeskId, dataObj) {
       isNew: true,
       matchedByAnydesk: false,
       mac: finalNewMac,
+      anydesk_id: cleanAd,
+      iot_id: String(dataObj.iot_id || "").trim(),
       project: defaultProj,
       software: defaultSoft,
       mac_ics: String(dataObj.mac_ics || ""),
@@ -1058,6 +1063,7 @@ function flushCachedHeartbeatsToSheet(options) {
   var projIdx = headers.indexOf("project");
   var softIdx = headers.indexOf("software");
   var icsIdx = headers.indexOf("mac_ics");
+  var iotIdx = headers.indexOf("iot_id");
   var statusIdx = headers.indexOf("status");
   var lastSeenIdx = headers.indexOf("last_seen");
   var appVerIdx = headers.indexOf("app_version");
@@ -1095,10 +1101,12 @@ function flushCachedHeartbeatsToSheet(options) {
   var changedProjects = {};
   var handledMacs = {};
   var changedRowIndices = [];
+  var extSyncQueue = [];
 
   for (var r = 0; r < values.length; r++) {
     var row = values[r];
     var rowChanged = false;
+    var resolvedRealMacOrIcs = false;
     var rowMac = String(row[macIdx] || "").trim().replace(/[:\-]/g, "").toUpperCase();
     var rowAd = normalizeAnydeskId(row[adIdx]);
     var rowProj = String(row[projIdx] || "").trim() || "Kho thiết bị";
@@ -1112,13 +1120,16 @@ function flushCachedHeartbeatsToSheet(options) {
           rowMac = hb.mac;
           matchedNewBoxOrSoft = true;
           rowChanged = true;
+          resolvedRealMacOrIcs = true;
           changedProjects[rowProj] = true;
         }
         // Chỉ điền AnyDesk ID nếu dòng này chưa từng có AnyDesk ID, tuyệt đối không ghi đè mã AnyDesk khác
         if (hb.anydesk_id && !rowAd) {
           row[adIdx] = hb.anydesk_id;
+          rowAd = hb.anydesk_id;
           dirtySheet = true;
           rowChanged = true;
+          resolvedRealMacOrIcs = true;
           changedProjects[rowProj] = true;
         }
         if (hb.software && String(hb.software) !== String(row[softIdx] || "")) {
@@ -1131,7 +1142,17 @@ function flushCachedHeartbeatsToSheet(options) {
           row[icsIdx] = hb.mac_ics;
           matchedNewBoxOrSoft = true;
           rowChanged = true;
+          resolvedRealMacOrIcs = true;
           changedProjects[rowProj] = true;
+        }
+        if (resolvedRealMacOrIcs) {
+          extSyncQueue.push({
+            mac: rowMac,
+            anydesk_id: rowAd,
+            iot_id: iotIdx !== -1 ? String(row[iotIdx] || "").trim() : "",
+            mac_ics: icsIdx !== -1 ? String(row[icsIdx] || "").trim() : "",
+            project: rowProj
+          });
         }
         if (hb.last_seen && String(hb.last_seen) !== String(row[lastSeenIdx] || "")) {
           row[lastSeenIdx] = hb.last_seen;
@@ -1221,9 +1242,27 @@ function flushCachedHeartbeatsToSheet(options) {
         });
         if (eUpsert && eUpsert.project) {
           changedProjects[eUpsert.project] = true;
+          extSyncQueue.push({
+            mac: eUpsert.mac || eHb.mac,
+            anydesk_id: eUpsert.anydesk_id || eHb.anydesk_id || "",
+            iot_id: eUpsert.iot_id || "",
+            mac_ics: eUpsert.mac_ics || eHb.mac_ics || "",
+            project: eUpsert.project
+          });
         }
         matchedNewBoxOrSoft = true;
       } catch (e) {}
+    }
+  }
+
+  // Tự động đẩy MAC thật / Mã ICS vừa nhận qua Heartbeat sang Google Sheet đích ngoài (nếu đang bật)
+  if (extSyncQueue.length > 0) {
+    for (var eq = 0; eq < extSyncQueue.length && eq < 30; eq++) {
+      try {
+        trySyncDeviceToExternalSheet(extSyncQueue[eq]);
+      } catch (extErr) {
+        Logger.log("trySyncDeviceToExternalSheet error in flushCachedHeartbeatsToSheet: " + extErr.message);
+      }
     }
   }
 
@@ -1642,8 +1681,8 @@ function handleRegisterDevice(params) {
     try {
       trySyncDeviceToExternalSheet({
         mac: upsertRes.mac,
-        anydesk_id: anydeskId,
-        iot_id: params.iot_id ? String(params.iot_id).trim() : "",
+        anydesk_id: upsertRes.anydesk_id || anydeskId,
+        iot_id: upsertRes.iot_id || (params.iot_id ? String(params.iot_id).trim() : ""),
         mac_ics: upsertRes.mac_ics || (params.mac_ics ? String(params.mac_ics).trim() : ""),
         project: upsertRes.project || ""
       });
@@ -3053,16 +3092,16 @@ function trySyncDeviceToExternalSheet(deviceObj, forceManual) {
   var targetRow = matchedRow > 0 ? matchedRow : (firstEmptyRow > 0 ? firstEmptyRow : (lastRow + 1));
 
   if (cAd > 0 && cleanAd) {
-    sheet.getRange(targetRow, cAd).setValue(cleanAd);
+    sheet.getRange(targetRow, cAd).setNumberFormat("@").setValue(String(cleanAd));
   }
   if (cMac > 0 && realMac) {
-    sheet.getRange(targetRow, cMac).setValue(realMac);
+    sheet.getRange(targetRow, cMac).setNumberFormat("@").setValue(String(realMac));
   }
   if (cIot > 0 && cleanIot) {
-    sheet.getRange(targetRow, cIot).setValue(cleanIot);
+    sheet.getRange(targetRow, cIot).setNumberFormat("@").setValue(String(cleanIot));
   }
   if (cIcs > 0 && cleanIcs) {
-    sheet.getRange(targetRow, cIcs).setValue(cleanIcs);
+    sheet.getRange(targetRow, cIcs).setNumberFormat("@").setValue(String(cleanIcs));
   }
 
   return {
