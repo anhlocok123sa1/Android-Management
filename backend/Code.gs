@@ -931,7 +931,7 @@ function routeAction(action, params) {
 var PENDING_TASKS_CACHE_KEY = "sgl_pending_tasks_map_v1";
 var LAST_FLUSH_TS_KEY = "sgl_last_sheet_flush_ts_v1";
 var NEW_HB_MACS_KEY = "sgl_new_hb_macs_v1";
-var FLUSH_INTERVAL_MS = 60 * 1000; // Ghi gộp xuống Sheet tối đa 1 lần / 60 giây
+var FLUSH_INTERVAL_MS = 5 * 60 * 1000; // Ghi gộp xuống Sheet tối đa 1 lần / 5 phút (API đọc realtime từ RAM Cache)
 
 /**
  * Xóa cache nhiệm vụ đang chờ khi có thay đổi (create_task, claim_task, complete_task, save_template).
@@ -1038,8 +1038,9 @@ function flushCachedHeartbeatsToSheet(options) {
   options = options || {};
   var cache = CacheService.getScriptCache();
 
-  // 1. Quét các Sheet dự án mới tạo (nếu có) — bỏ qua nếu caller đã quét trong cùng request
-  if (!options.skipIngest) {
+  // 1. Tách ingestProjectSheetsToMaster khỏi vòng flush định kỳ để tránh quét toàn bộ các tab Sheet mỗi chu kỳ.
+  // Chỉ quét các tab dự án mới khi được yêu cầu tường minh (options.runIngest === true).
+  if (options.runIngest === true && !options.skipIngest) {
     try {
       ingestProjectSheetsToMaster();
     } catch (e) {}
@@ -1093,9 +1094,11 @@ function flushCachedHeartbeatsToSheet(options) {
   var matchedNewBoxOrSoft = false;
   var changedProjects = {};
   var handledMacs = {};
+  var changedRowIndices = [];
 
   for (var r = 0; r < values.length; r++) {
     var row = values[r];
+    var rowChanged = false;
     var rowMac = String(row[macIdx] || "").trim().replace(/[:\-]/g, "").toUpperCase();
     var rowAd = normalizeAnydeskId(row[adIdx]);
     var rowProj = String(row[projIdx] || "").trim() || "Kho thiết bị";
@@ -1108,39 +1111,47 @@ function flushCachedHeartbeatsToSheet(options) {
           row[macIdx] = hb.mac;
           rowMac = hb.mac;
           matchedNewBoxOrSoft = true;
+          rowChanged = true;
           changedProjects[rowProj] = true;
         }
         // Chỉ điền AnyDesk ID nếu dòng này chưa từng có AnyDesk ID, tuyệt đối không ghi đè mã AnyDesk khác
         if (hb.anydesk_id && !rowAd) {
           row[adIdx] = hb.anydesk_id;
           dirtySheet = true;
+          rowChanged = true;
           changedProjects[rowProj] = true;
         }
         if (hb.software && String(hb.software) !== String(row[softIdx] || "")) {
           row[softIdx] = hb.software;
           matchedNewBoxOrSoft = true;
+          rowChanged = true;
           changedProjects[rowProj] = true;
         }
         if (hb.mac_ics && String(hb.mac_ics) !== String(row[icsIdx] || "")) {
           row[icsIdx] = hb.mac_ics;
           matchedNewBoxOrSoft = true;
+          rowChanged = true;
           changedProjects[rowProj] = true;
         }
         if (hb.last_seen && String(hb.last_seen) !== String(row[lastSeenIdx] || "")) {
           row[lastSeenIdx] = hb.last_seen;
           dirtySheet = true;
+          rowChanged = true;
         }
         if (hb.app_version !== undefined && String(hb.app_version) !== "" && String(hb.app_version) !== String(row[appVerIdx] || "")) {
           row[appVerIdx] = hb.app_version;
           dirtySheet = true;
+          rowChanged = true;
         }
         if (hb.storage_mb !== undefined && String(hb.storage_mb) !== "" && String(hb.storage_mb) !== String(row[storageIdx] || "")) {
           row[storageIdx] = hb.storage_mb;
           dirtySheet = true;
+          rowChanged = true;
         }
         if (hb.current_task !== undefined && String(hb.current_task) !== String(row[taskIdx] || "")) {
           row[taskIdx] = hb.current_task;
           dirtySheet = true;
+          rowChanged = true;
         }
         handledMacs[rowMac] = true;
       } catch (parseErr) {}
@@ -1156,14 +1167,37 @@ function flushCachedHeartbeatsToSheet(options) {
         if (curSt !== "busy" && curSt !== newSt) {
           row[statusIdx] = newSt;
           dirtySheet = true;
+          rowChanged = true;
         }
       }
     }
+
+    if (rowChanged) {
+      changedRowIndices.push(r);
+    }
   }
 
-  // Ghi gộp toàn bộ bảng Devices chỉ bằng 1 lệnh setValues duy nhất!
-  if ((dirtySheet || matchedNewBoxOrSoft) && values.length > 0) {
-    devicesSheet.getRange(2, 1, values.length, headers.length).setValues(values);
+  // Ghi tối ưu xuống bảng Devices: nếu chỉ có ít dòng thay đổi, chỉ ghi các block dòng đó thay vì ghi đè toàn bảng
+  if (changedRowIndices.length > 0 && values.length > 0) {
+    if (changedRowIndices.length <= 20 && changedRowIndices.length * 3 < values.length) {
+      var blockStart = changedRowIndices[0];
+      var blockEnd = changedRowIndices[0];
+      for (var cIdx = 1; cIdx < changedRowIndices.length; cIdx++) {
+        var curRowIdx = changedRowIndices[cIdx];
+        if (curRowIdx === blockEnd + 1) {
+          blockEnd = curRowIdx;
+        } else {
+          devicesSheet.getRange(blockStart + 2, 1, blockEnd - blockStart + 1, headers.length)
+            .setValues(values.slice(blockStart, blockEnd + 1));
+          blockStart = curRowIdx;
+          blockEnd = curRowIdx;
+        }
+      }
+      devicesSheet.getRange(blockStart + 2, 1, blockEnd - blockStart + 1, headers.length)
+        .setValues(values.slice(blockStart, blockEnd + 1));
+    } else {
+      devicesSheet.getRange(2, 1, values.length, headers.length).setValues(values);
+    }
   }
 
   // Thêm các Box hoàn toàn mới chưa có trong bảng Devices
@@ -1203,6 +1237,7 @@ function flushCachedHeartbeatsToSheet(options) {
     try {
       syncProjectSheets({
         skipIngest: true,
+        skipFinal: true,
         targetProjects: changedProjList
       });
     } catch (e) {}
@@ -1761,12 +1796,20 @@ function handleUpdateIotId(params) {
 
     // Tự động đẩy cập nhật Mã IoT & AnyDesk sang Google Sheet đích ngoài (nếu đã cấu hình)
     try {
+      var deviceProj = "Kho thiết bị";
+      if (targetRowIdx > 0) {
+        var projColIdx = headers.indexOf("project");
+        if (projColIdx >= 0) {
+          var pv = String(devicesSheet.getRange(targetRowIdx, projColIdx + 1).getValue() || "").trim();
+          if (pv) deviceProj = pv;
+        }
+      }
       trySyncDeviceToExternalSheet({
         mac: mac,
         anydesk_id: anydeskId || effectiveOldAd,
         iot_id: newIotId,
         mac_ics: "",
-        project: ""
+        project: deviceProj
       });
     } catch (extErr) {
       Logger.log("trySyncDeviceToExternalSheet error in handleUpdateIotId: " + extErr.message);
@@ -2444,6 +2487,52 @@ function handleBatchImportDevices(params) {
  * 2. Mỗi Dự án (vd: "Xã Xuyên Mộc (Đợt 1)", "Box Bảo Hành", "Android Dự Phòng", "Kho thiết bị"...)
  *    có riêng 1 Sheet hiển thị danh sách thiết bị thuộc dự án đó.
  */
+/**
+ * Ghi dữ liệu dạng bảng vào Sheet mà KHÔNG dùng clear() hoặc setBorder() lặp lại.
+ * Chỉ định dạng header 1 lần nếu header chưa khớp hoặc mới tạo sheet; chỉ clearContent() phần dòng dư.
+ */
+function writeStyledTableNoClear(sheet, headers, tableData, headerBg, headerFg) {
+  var numCols = headers.length;
+  var prevLastRow = sheet.getLastRow();
+  var prevLastCol = sheet.getLastColumn();
+
+  var needHeaderFormat = false;
+  if (prevLastRow === 0 || prevLastCol < numCols) {
+    needHeaderFormat = true;
+  } else {
+    var curHeader = sheet.getRange(1, 1, 1, numCols).getValues()[0];
+    for (var h = 0; h < numCols; h++) {
+      if (String(curHeader[h] || "").trim() !== String(headers[h])) {
+        needHeaderFormat = true;
+        break;
+      }
+    }
+  }
+
+  if (needHeaderFormat) {
+    var hdrRange = sheet.getRange(1, 1, 1, numCols);
+    hdrRange.setValues([headers]);
+    hdrRange.setFontWeight("bold");
+    if (headerBg) hdrRange.setBackground(headerBg);
+    if (headerFg) hdrRange.setFontColor(headerFg);
+    if (sheet.getFrozenRows() < 1) {
+      sheet.setFrozenRows(1);
+    }
+  }
+
+  if (tableData && tableData.length > 0) {
+    sheet.getRange(2, 1, tableData.length, numCols).setValues(tableData);
+  }
+
+  var newTotalRows = 1 + (tableData ? tableData.length : 0);
+  if (prevLastRow > newTotalRows) {
+    sheet.getRange(newTotalRows + 1, 1, prevLastRow - newTotalRows, Math.max(prevLastCol, numCols)).clearContent();
+  }
+  if (prevLastCol > numCols && prevLastRow > 0) {
+    sheet.getRange(1, numCols + 1, Math.max(prevLastRow, newTotalRows), prevLastCol - numCols).clearContent();
+  }
+}
+
 function syncProjectSheets(options) {
   options = options || {};
   var targetProjects = Array.isArray(options.targetProjects) ? options.targetProjects : null;
@@ -2534,7 +2623,7 @@ function syncProjectSheets(options) {
     "IMEI SIM", "TASK HIỆN TẠI", "GHI CHÚ"
   ];
 
-  // 1. CẬP NHẬT TỪNG SHEET DỰ ÁN (ở chế độ partial chỉ vẽ lại các tab dự án thực sự có thay đổi)
+  // 1. CẬP NHẬT TỪNG SHEET DỰ ÁN (ở chế độ partial chỉ vẽ lại các tab dự án thực sự có thay đổi, không clear()/setBorder())
   var activeProjectSafeNames = {};
   for (var projName in byProject) {
     var safeName = projName.replace(/[\[\]\*\?\/\\:]/g, "-").substring(0, 80).trim();
@@ -2546,17 +2635,10 @@ function syncProjectSheets(options) {
     if (!pSheet) {
       pSheet = ss.insertSheet(safeName);
     }
-    pSheet.clear();
-
-    pSheet.getRange(1, 1, 1, projHeaders.length).setValues([projHeaders]);
-    pSheet.getRange(1, 1, 1, projHeaders.length).setFontWeight("bold");
-    pSheet.getRange(1, 1, 1, projHeaders.length).setBackground("#1E293B"); // Slate dark
-    pSheet.getRange(1, 1, 1, projHeaders.length).setFontColor("#F8FAFC");
-    pSheet.setFrozenRows(1);
 
     var items = byProject[projName];
+    var tableData = [];
     if (items && items.length > 0) {
-      var tableData = [];
       for (var j = 0; j < items.length; j++) {
         var it = items[j];
         tableData.push([
@@ -2574,10 +2656,8 @@ function syncProjectSheets(options) {
           String(it.notes || "")
         ]);
       }
-      pSheet.getRange(2, 1, tableData.length, projHeaders.length).setValues(tableData);
-      pSheet.getRange(1, 1, tableData.length + 1, projHeaders.length)
-        .setBorder(true, true, true, true, true, true, "#CBD5E1", SpreadsheetApp.BorderStyle.SOLID);
     }
+    writeStyledTableNoClear(pSheet, projHeaders, tableData, "#1E293B", "#F8FAFC");
   }
 
   // 1b. TỰ ĐỘNG DỌN DẸP / XÓA CÁC TAB DỰ ÁN CŨ KHÔNG CÒN THIẾT BỊ NÀO & LÀM SẠCH CÁC TAB NHÁP (New, Box Lỗi...)
@@ -2663,7 +2743,6 @@ function syncProjectSheets(options) {
           }
 
           if (removedCount > 0) {
-            curS.clear();
             // Kiểm tra xem còn dòng dữ liệu thực tế nào không (ngoài tiêu đề)
             var hasRealData = false;
             for (var kr = 0; kr < keptRows.length; kr++) {
@@ -2676,6 +2755,11 @@ function syncProjectSheets(options) {
 
             if (hasRealData && keptRows.length > 0) {
               curS.getRange(1, 1, keptRows.length, keptRows[0].length).setValues(keptRows);
+              if (curLastRow > keptRows.length) {
+                curS.getRange(keptRows.length + 1, 1, curLastRow - keptRows.length, Math.max(curLastCol, keptRows[0].length)).clearContent();
+              }
+            } else {
+              curS.clearContent();
             }
           }
         }
@@ -2694,53 +2778,45 @@ function syncProjectSheets(options) {
   }
 
   // 2. CẬP NHẬT SHEET "FINAL - TẤT CẢ DỰ ÁN"
-  var finalSheetName = "FINAL - TẤT CẢ DỰ ÁN";
-  var fSheet = ss.getSheetByName(finalSheetName);
-  if (!fSheet) {
-    fSheet = ss.insertSheet(finalSheetName, 0); // Đặt ở vị trí đầu tiên
-  }
-  fSheet.clear();
-
-  var finalHeaders = [
-    "STT", "DỰ ÁN (ĐỊA BÀN)", "MÃ ANYDESK", "MÃ IOT", "MAC ANDROID", "MÃ ICS", 
-    "TRẠNG THÁI", "PHẦN MỀM", "APP VER", "PING CUỐI (HEARTBEAT)", 
-    "IMEI SIM", "TASK HIỆN TẠI", "GHI CHÚ"
-  ];
-
-  fSheet.getRange(1, 1, 1, finalHeaders.length).setValues([finalHeaders]);
-  fSheet.getRange(1, 1, 1, finalHeaders.length).setFontWeight("bold");
-  fSheet.getRange(1, 1, 1, finalHeaders.length).setBackground("#0F172A"); // Darker navy
-  fSheet.getRange(1, 1, 1, finalHeaders.length).setFontColor("#38BDF8"); // Cyan text
-  fSheet.setFrozenRows(1);
-
-  var globalStt = 1;
-  var finalData = [];
-  for (var p in byProject) {
-    var pItems = byProject[p];
-    for (var k = 0; k < pItems.length; k++) {
-      var itm = pItems[k];
-      finalData.push([
-        globalStt++,
-        p,
-        String(itm.anydesk_id || ""),
-        String(itm.iot_id || ""),
-        String(itm.mac || "").toUpperCase(),
-        String(itm.mac_ics || ""),
-        String(itm.status || ""),
-        String(itm.software || ""),
-        String(itm.app_version || ""),
-        String(itm.last_seen || ""),
-        String(itm.imei_sim || ""),
-        String(itm.task_id || ""),
-        String(itm.notes || "")
-      ]);
+  // Bỏ qua khi đang flush ngầm (skipFinal) hoặc khi đồng bộ cục bộ 1 vài dự án (trừ khi yêu cầu syncFinal: true)
+  if (!options.skipFinal && (!isPartial || options.syncFinal)) {
+    var finalSheetName = "FINAL - TẤT CẢ DỰ ÁN";
+    var fSheet = ss.getSheetByName(finalSheetName);
+    if (!fSheet) {
+      fSheet = ss.insertSheet(finalSheetName, 0); // Đặt ở vị trí đầu tiên
     }
-  }
 
-  if (finalData.length > 0) {
-    fSheet.getRange(2, 1, finalData.length, finalHeaders.length).setValues(finalData);
-    fSheet.getRange(1, 1, finalData.length + 1, finalHeaders.length)
-      .setBorder(true, true, true, true, true, true, "#94A3B8", SpreadsheetApp.BorderStyle.SOLID);
+    var finalHeaders = [
+      "STT", "DỰ ÁN (ĐỊA BÀN)", "MÃ ANYDESK", "MÃ IOT", "MAC ANDROID", "MÃ ICS", 
+      "TRẠNG THÁI", "PHẦN MỀM", "APP VER", "PING CUỐI (HEARTBEAT)", 
+      "IMEI SIM", "TASK HIỆN TẠI", "GHI CHÚ"
+    ];
+
+    var globalStt = 1;
+    var finalData = [];
+    for (var p in byProject) {
+      var pItems = byProject[p];
+      for (var k = 0; k < pItems.length; k++) {
+        var itm = pItems[k];
+        finalData.push([
+          globalStt++,
+          p,
+          String(itm.anydesk_id || ""),
+          String(itm.iot_id || ""),
+          String(itm.mac || "").toUpperCase(),
+          String(itm.mac_ics || ""),
+          String(itm.status || ""),
+          String(itm.software || ""),
+          String(itm.app_version || ""),
+          String(itm.last_seen || ""),
+          String(itm.imei_sim || ""),
+          String(itm.task_id || ""),
+          String(itm.notes || "")
+        ]);
+      }
+    }
+
+    writeStyledTableNoClear(fSheet, finalHeaders, finalData, "#0F172A", "#38BDF8");
   }
 }
 
@@ -2796,8 +2872,12 @@ function handleGetExternalSheetConfig() {
     col_mac: "D",
     col_iot: "B",
     col_ics: "",
-    start_row: 2
+    start_row: 2,
+    filter_projects: "",
+    require_iot: false
   };
+  if (cfg.filter_projects === undefined) cfg.filter_projects = "";
+  if (cfg.require_iot === undefined) cfg.require_iot = false;
   return {
     status: "ok",
     config: cfg
@@ -2813,6 +2893,8 @@ function handleSaveExternalSheetConfig(params) {
   var colMac = String(params.col_mac || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
   var colIot = String(params.col_iot || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
   var colIcs = String(params.col_ics || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+  var filterProjects = String(params.filter_projects || "").trim();
+  var requireIot = params.require_iot === true || String(params.require_iot).toLowerCase() === "true";
   var startRow = parseInt(params.start_row || "2", 10);
   if (isNaN(startRow) || startRow < 1) startRow = 2;
 
@@ -2846,7 +2928,9 @@ function handleSaveExternalSheetConfig(params) {
     col_mac: colMac,
     col_iot: colIot,
     col_ics: colIcs,
-    start_row: startRow
+    start_row: startRow,
+    filter_projects: filterProjects,
+    require_iot: requireIot
   };
 
   PropertiesService.getScriptProperties().setProperty(EXT_SHEET_CONFIG_PROP, JSON.stringify(cfg));
@@ -2854,7 +2938,7 @@ function handleSaveExternalSheetConfig(params) {
     status: "ok",
     config: cfg,
     message: enabled
-      ? "Đã lưu & xác thực Google Sheet đích (Tự động đồng bộ: BẬT)!"
+      ? ("Đã lưu & xác thực Google Sheet đích (Tự động: BẬT" + (filterProjects ? (" — Lọc dự án: " + filterProjects) : "") + ")!")
       : (spreadsheetId
           ? "Đã lưu & xác thực Google Sheet đích (Chế độ Thủ công — bấm 'Đẩy Sheet Ngoài' khi cần)!"
           : "Đã lưu cấu hình (Chưa thiết lập Sheet ngoài).")
@@ -2873,6 +2957,24 @@ function trySyncDeviceToExternalSheet(deviceObj, forceManual) {
   }
   if (!forceManual && !cfg.enabled) {
     return { synced: false, reason: "disabled" };
+  }
+
+  // Bộ lọc cho chế độ TỰ ĐỘNG (bấm tay 'Đẩy Sheet Ngoài' sẽ luôn bỏ qua bộ lọc này)
+  if (!forceManual) {
+    var filterRaw = String(cfg.filter_projects || "").trim();
+    if (filterRaw) {
+      var allowed = filterRaw.split(",").map(function(p) { return p.trim().toLowerCase(); }).filter(Boolean);
+      var devProj = String(deviceObj.project || "Kho thiết bị").trim().toLowerCase();
+      if (allowed.length > 0 && allowed.indexOf(devProj) === -1) {
+        return { synced: false, reason: "filtered_project:" + devProj };
+      }
+    }
+    if (cfg.require_iot) {
+      var iotCheck = String(deviceObj.iot_id || "").trim();
+      if (!iotCheck || iotCheck === "-") {
+        return { synced: false, reason: "missing_iot" };
+      }
+    }
   }
 
   var cAd = columnLetterToIndex(cfg.col_anydesk);

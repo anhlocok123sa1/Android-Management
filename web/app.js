@@ -2071,11 +2071,14 @@ async function loadExternalSheetConfig() {
       if (document.getElementById("txtExtColMac")) document.getElementById("txtExtColMac").value = c.col_mac || "";
       if (document.getElementById("txtExtColIot")) document.getElementById("txtExtColIot").value = c.col_iot || "";
       if (document.getElementById("txtExtColIcs")) document.getElementById("txtExtColIcs").value = c.col_ics || "";
+      if (document.getElementById("txtExtFilterProjects")) document.getElementById("txtExtFilterProjects").value = c.filter_projects || "";
+      if (document.getElementById("chkExtRequireIot")) document.getElementById("chkExtRequireIot").checked = !!c.require_iot;
 
       if (badge) {
         if (c.enabled && c.spreadsheet_id) {
+          const filterNote = c.filter_projects ? ` · Lọc: ${c.filter_projects}` : "";
           badge.className = "badge badge-online";
-          badge.textContent = `🟢 Tự động (${c.sheet_name || "Theo Dự Án"})`;
+          badge.textContent = `🟢 Tự động (${c.sheet_name || "Theo Dự Án"}${filterNote})`;
         } else if (c.spreadsheet_id) {
           badge.className = "badge badge-slow";
           badge.textContent = `🟡 Thủ công (${c.sheet_name || "Theo Dự Án"})`;
@@ -2103,6 +2106,8 @@ async function saveExternalSheetConfig() {
   const col_mac = (document.getElementById("txtExtColMac").value || "").trim().toUpperCase();
   const col_iot = (document.getElementById("txtExtColIot").value || "").trim().toUpperCase();
   const col_ics = (document.getElementById("txtExtColIcs").value || "").trim().toUpperCase();
+  const filter_projects = (document.getElementById("txtExtFilterProjects") ? document.getElementById("txtExtFilterProjects").value : "").trim();
+  const require_iot = !!(document.getElementById("chkExtRequireIot") && document.getElementById("chkExtRequireIot").checked);
 
   if (btn) {
     btn.disabled = true;
@@ -2118,7 +2123,9 @@ async function saveExternalSheetConfig() {
       col_anydesk,
       col_mac,
       col_iot,
-      col_ics
+      col_ics,
+      filter_projects,
+      require_iot
     });
     if (res && res.status === "ok") {
       showToast(`✔ ${res.message || "Đã lưu cấu hình Google Sheet ngoài!"}`);
