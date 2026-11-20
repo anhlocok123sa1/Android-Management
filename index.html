@@ -532,6 +532,21 @@
           </div>
         </div>
 
+        <div class="form-row">
+          <label>🎯 Chỉ tự động đẩy các Dự Án sau (cách nhau dấu phẩy, để trống = tất cả):</label>
+          <input type="text" id="txtExtFilterProjects" list="dlExistingProjects" class="input-control" placeholder="VD: Kho thiết bị (hoặc: Kho thiết bị, New)" />
+          <small style="color:var(--text-muted); font-size:11px; margin-top:4px; display:block;">
+            Dùng để tách riêng 2 bên test: chỉ Box thuộc dự án nhập ở đây mới tự đẩy sang Sheet ngoài (bên QA/dự án khác sẽ bỏ qua). Bấm tay nút "Đẩy Sheet Ngoài" vẫn hoạt động cho mọi Box.
+          </small>
+        </div>
+
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="checkbox" id="chkExtRequireIot" />
+            <span>Chỉ tự động đẩy khi Box đã có Mã IoT (tùy chọn)</span>
+          </label>
+        </div>
+
         <div style="display:flex; gap:10px; margin-top:12px;">
           <button class="btn btn-success" id="btnSaveExtSheet" onclick="saveExternalSheetConfig()">💾 Lưu &amp; Kiểm Tra Quyền Sheet</button>
         </div>
